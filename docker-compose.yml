@@ -40,7 +40,7 @@ services:
 
   frontend:
     build:
-      context: .
+      context: ./frontend
       dockerfile: Dockerfile
     container_name: jobtracker-frontend
     restart: unless-stopped

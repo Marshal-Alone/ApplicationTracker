@@ -3,7 +3,6 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Download, Chrome, FileText, Zap, CheckCircle2, AlertCircle, FolderOpen, Settings2, Play } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
-import { downloadExtension } from '../api/simpleDownload';
 
 export const ExtensionDownload = () => {
   const [isDownloading, setIsDownloading] = useState(false);
@@ -13,7 +12,7 @@ export const ExtensionDownload = () => {
     setIsDownloading(true);
 
     try {
-      await downloadExtension();
+      window.open('https://drive.google.com/file/d/160Hr_YSUI8q684tNFWeG-S8K0zUEqBAR/view?usp=sharing', '_blank');
 
       toast({
         title: "Extension Download Started!",

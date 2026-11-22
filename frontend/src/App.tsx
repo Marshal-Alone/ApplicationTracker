@@ -9,7 +9,7 @@ import { Layout } from "./components/Layout";
 import { Dashboard } from "./components/Dashboard";
 import { Applications } from "./components/Applications";
 import { ExtensionDownload } from "./components/ExtensionDownload";
-import NotFound from "./pages/NotFound";
+import NotFound from "./components/NotFound";
 
 const queryClient = new QueryClient();
 
