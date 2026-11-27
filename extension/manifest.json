@@ -1,22 +1,41 @@
-
 {
   "manifest_version": 3,
-  "name": "JobTracker Assistant",
-  "version": "1.0",
-  "description": "AI-powered job application tracking assistant",
+  "name": "ApplicationTracker Assistant",
+  "version": "1.1.0",
+  "description": "Extract and save job postings directly into your ApplicationTracker workspace",
   "permissions": [
     "activeTab",
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "alarms",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://internshala.com/*",
     "https://unstop.com/*",
+    "https://*.indeed.com/*",
+    "https://www.naukri.com/*",
+    "https://www.glassdoor.com/*",
+    "https://www.glassdoor.co.in/*",
+    "https://boards.greenhouse.io/*",
+    "https://job-boards.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://*.myworkdayjobs.com/*",
+    "https://jobs.ashbyhq.com/*",
+    "https://jobs.smartrecruiters.com/*",
+    "https://apply.workable.com/*",
+    "https://wellfound.com/*",
+    "https://www.workatastartup.com/*",
+    "https://ats.rippling.com/*",
+    "https://*.bamboohr.com/*",
+    "https://*.recruitee.com/*",
+    "https://*.breezy.hr/*",
     "https://job-hunter-backend-sigma.vercel.app/*",
-    "https://preview--application-ace-platform.lovable.app/*",
-    "https://*.lovable.app/*"
+    "http://localhost:3001/*",
+    "http://localhost:8080/*",
+    "http://localhost:8081/*"
   ],
   "content_scripts": [
     {
@@ -24,15 +43,34 @@
         "https://www.linkedin.com/jobs/*",
         "https://internshala.com/internship/*",
         "https://internshala.com/job/*",
-        "https://unstop.com/p/*"
+        "https://unstop.com/*",
+        "https://*.indeed.com/*",
+        "https://www.naukri.com/*",
+        "https://www.glassdoor.com/job-listing/*",
+        "https://www.glassdoor.co.in/job-listing/*",
+        "https://boards.greenhouse.io/*",
+        "https://job-boards.greenhouse.io/*",
+        "https://jobs.lever.co/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://jobs.ashbyhq.com/*",
+        "https://jobs.smartrecruiters.com/*",
+        "https://apply.workable.com/*",
+        "https://wellfound.com/*",
+        "https://www.workatastartup.com/*",
+        "https://ats.rippling.com/*",
+        "https://*.bamboohr.com/careers/*",
+        "https://*.recruitee.com/*",
+        "https://*.breezy.hr/*"
       ],
       "js": ["content.js"],
       "run_at": "document_end"
     }
   ],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "JobTracker Assistant - AI Job Tracking"
+    "default_title": "ApplicationTracker Assistant (Open Sidebar)"
   },
   "background": {
     "service_worker": "background.js"

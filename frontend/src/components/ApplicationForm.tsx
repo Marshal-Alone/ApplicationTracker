@@ -1,22 +1,11 @@
-
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-
-interface JobApplication {
-  id: string;
-  company: string;
-  position: string;
-  location?: string;
-  salary?: string;
-  jobUrl?: string;
-  description?: string;
-  status: 'Applied' | 'Interview Scheduled' | 'Under Review' | 'Rejected' | 'Offer';
-  appliedDate: string;
-  notes?: string;
-}
+import { SelectField } from '@/components/ui/select-field';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { APPLICATION_STATUSES, extractRequirementsList } from '@/lib/formatters';
+import { ApplicationStatus, JobApplication } from '@/types/tracker';
 
 interface ApplicationFormProps {
   application?: JobApplication | null;
@@ -24,36 +13,77 @@ interface ApplicationFormProps {
   onSubmit: (data: Partial<JobApplication>) => Promise<void>;
 }
 
-export const ApplicationForm: React.FC<ApplicationFormProps> = ({ 
-  application, 
-  onClose, 
-  onSubmit 
+export const ApplicationForm: React.FC<ApplicationFormProps> = ({
+  application,
+  onClose,
+  onSubmit,
 }) => {
   const isEditing = !!application;
-  
+
   const [formData, setFormData] = useState({
     company: application?.company || '',
     position: application?.position || '',
     location: application?.location || '',
     salary: application?.salary || '',
     jobUrl: application?.jobUrl || '',
+    applyUrl: application?.applyUrl || '',
     description: application?.description || '',
-    status: application?.status || 'Applied',
+    status: (application?.status || 'Applied') as ApplicationStatus,
     appliedDate: application?.appliedDate || new Date().toISOString().split('T')[0],
-    notes: application?.notes || ''
+    resumeVersion: application?.resumeVersion || '',
+    referralContact: application?.referralContact || '',
+    followUpDate: application?.followUpDate || '',
+    notes: application?.notes || '',
   });
 
   const [isLoading, setIsLoading] = useState(false);
+
+  const detectedRequirements = extractRequirementsList(
+    formData.description,
+    isEditing && formData.description.trim() === (application?.description || '').trim()
+      ? application?.requirements
+      : undefined
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.company.trim() || !formData.position.trim()) {
       return;
     }
-    
+
     setIsLoading(true);
     try {
-      await onSubmit(formData);
+      const {
+        company,
+        position,
+        location,
+        salary,
+        jobUrl,
+        applyUrl,
+        description,
+        status,
+        appliedDate,
+        resumeVersion,
+        referralContact,
+        followUpDate,
+        notes,
+      } = formData;
+      await onSubmit({
+        company,
+        position,
+        location,
+        salary,
+        jobUrl,
+        applyUrl,
+        description,
+        requirements: detectedRequirements,
+        status,
+        appliedDate,
+        resumeVersion,
+        referralContact,
+        followUpDate,
+        notes,
+      });
       onClose();
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -62,185 +92,249 @@ export const ApplicationForm: React.FC<ApplicationFormProps> = ({
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    setFormData(prev => ({
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    setFormData((prev) => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     }));
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-slate-200">
-          <h2 className="text-2xl font-bold text-slate-800">
-            {isEditing ? 'Edit Application' : 'Add New Application'}
-          </h2>
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={isLoading}>
-            <X className="w-5 h-5" />
-          </Button>
-        </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl p-0 sm:p-0 overflow-hidden gap-0 bg-[hsl(var(--surface-card))] border-[var(--hairline-strong)] rounded-[14px]">
+        <DialogHeader className="px-5 sm:px-6 pt-5 pb-3.5 pr-12 border-b border-[var(--hairline)] flex-shrink-0">
+          <DialogTitle className="text-[18px] font-medium text-[hsl(var(--ink-primary))]">
+            {isEditing ? 'Edit application' : 'Add application'}
+          </DialogTitle>
+        </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="company" className="text-sm font-semibold text-slate-700">
+              <Label htmlFor="app-company" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
                 Company *
               </Label>
               <Input
-                id="company"
+                id="app-company"
                 name="company"
                 value={formData.company}
                 onChange={handleChange}
                 required
-                placeholder="e.g., Google"
-                className="mt-1 h-11 border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Linear"
+                className="mt-1.5 h-9 rounded-[8px]"
               />
             </div>
             <div>
-              <Label htmlFor="position" className="text-sm font-semibold text-slate-700">
+              <Label htmlFor="app-position" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
                 Position *
               </Label>
               <Input
-                id="position"
+                id="app-position"
                 name="position"
                 value={formData.position}
                 onChange={handleChange}
                 required
-                placeholder="e.g., Software Engineer"
-                className="mt-1 h-11 border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Product Engineer"
+                className="mt-1.5 h-9 rounded-[8px]"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="location" className="text-sm font-semibold text-slate-700">
+              <Label htmlFor="app-location" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
                 Location
               </Label>
               <Input
-                id="location"
+                id="app-location"
                 name="location"
                 value={formData.location}
                 onChange={handleChange}
-                placeholder="e.g., San Francisco, CA"
-                className="mt-1 h-11 border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Bengaluru or Remote"
+                className="mt-1.5 h-9 rounded-[8px]"
               />
             </div>
             <div>
-              <Label htmlFor="salary" className="text-sm font-semibold text-slate-700">
-                Salary/Compensation
+              <Label htmlFor="app-salary" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Compensation
               </Label>
               <Input
-                id="salary"
+                id="app-salary"
                 name="salary"
                 value={formData.salary}
                 onChange={handleChange}
-                placeholder="e.g., $120,000 - $150,000"
-                className="mt-1 h-11 border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="₹24,00,000 or $140,000"
+                className="mt-1.5 h-9 rounded-[8px] font-mono-num"
               />
             </div>
-          </div>
-
-          <div>
-            <Label htmlFor="jobUrl" className="text-sm font-semibold text-slate-700">
-              Job URL
-            </Label>
-            <Input
-              id="jobUrl"
-              name="jobUrl"
-              type="url"
-              value={formData.jobUrl}
-              onChange={handleChange}
-              placeholder="https://..."
-              className="mt-1 h-11 border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="status" className="text-sm font-semibold text-slate-700">
-                Status
-              </Label>
-              <select
-                id="status"
-                name="status"
-                value={formData.status}
-                onChange={handleChange}
-                className="mt-1 w-full h-11 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-              >
-                <option value="Applied">📝 Applied</option>
-                <option value="Under Review">👀 Under Review</option>
-                <option value="Interview Scheduled">📅 Interview Scheduled</option>
-                <option value="Offer">🎉 Offer</option>
-                <option value="Rejected">❌ Rejected</option>
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="appliedDate" className="text-sm font-semibold text-slate-700">
-                Applied Date
+              <Label htmlFor="app-jobUrl" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Job posting URL
               </Label>
               <Input
-                id="appliedDate"
+                id="app-jobUrl"
+                name="jobUrl"
+                type="url"
+                value={formData.jobUrl}
+                onChange={handleChange}
+                placeholder="https://linkedin.com/jobs/view/..."
+                className="mt-1.5 h-9 rounded-[8px]"
+              />
+            </div>
+            <div>
+              <Label htmlFor="app-applyUrl" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                External apply URL
+              </Label>
+              <Input
+                id="app-applyUrl"
+                name="applyUrl"
+                type="url"
+                value={formData.applyUrl}
+                onChange={handleChange}
+                placeholder="https://boards.greenhouse.io/..."
+                className="mt-1.5 h-9 rounded-[8px]"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="app-status" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Stage
+              </Label>
+              <div className="mt-1.5">
+                <SelectField
+                  id="app-status"
+                  value={formData.status}
+                  onValueChange={(next) =>
+                    setFormData((prev) => ({ ...prev, status: next as ApplicationStatus }))
+                  }
+                  className="w-full"
+                  options={APPLICATION_STATUSES.map((st) => ({ value: st, label: st }))}
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="app-appliedDate" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Applied date
+              </Label>
+              <Input
+                id="app-appliedDate"
                 name="appliedDate"
                 type="date"
                 value={formData.appliedDate}
                 onChange={handleChange}
-                className="mt-1 h-11 border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="mt-1.5 h-9 rounded-[8px] font-mono-num"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label htmlFor="app-resume" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Resume version
+              </Label>
+              <Input
+                id="app-resume"
+                name="resumeVersion"
+                value={formData.resumeVersion}
+                onChange={handleChange}
+                placeholder="Resume_SDE_v1.pdf"
+                className="mt-1.5 h-9 rounded-[8px]"
+              />
+            </div>
+            <div>
+              <Label htmlFor="app-referral" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Referral / contact
+              </Label>
+              <Input
+                id="app-referral"
+                name="referralContact"
+                value={formData.referralContact}
+                onChange={handleChange}
+                placeholder="Alumni or recruiter name"
+                className="mt-1.5 h-9 rounded-[8px]"
+              />
+            </div>
+            <div>
+              <Label htmlFor="app-followup" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Follow-up date
+              </Label>
+              <Input
+                id="app-followup"
+                name="followUpDate"
+                type="date"
+                value={formData.followUpDate}
+                onChange={handleChange}
+                className="mt-1.5 h-9 rounded-[8px] font-mono-num"
               />
             </div>
           </div>
 
           <div>
-            <Label htmlFor="description" className="text-sm font-semibold text-slate-700">
-              Job Description
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="app-description" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Job description
+              </Label>
+              <span className="text-[11px] font-mono-num text-[hsl(var(--ink-muted))]">
+                {detectedRequirements.length > 0
+                  ? `${detectedRequirements.length} requirement${detectedRequirements.length === 1 ? '' : 's'} detected`
+                  : 'Paste "Who You Are" or Requirements to extract bullets'}
+              </span>
+            </div>
             <textarea
-              id="description"
+              id="app-description"
               name="description"
               value={formData.description}
               onChange={handleChange}
-              rows={4}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-              placeholder="Job description, requirements, etc."
+              rows={5}
+              className="mt-1.5 w-full px-3 py-2 text-[13px] border border-[var(--hairline-strong)] rounded-[8px] bg-[hsl(var(--surface-card))] resize-y"
+              placeholder="Role summary, Who You Are, or key qualifications"
             />
           </div>
 
           <div>
-            <Label htmlFor="notes" className="text-sm font-semibold text-slate-700">
-              Notes
+            <Label htmlFor="app-notes" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+              Personal notes
             </Label>
             <textarea
-              id="notes"
+              id="app-notes"
               name="notes"
               value={formData.notes}
               onChange={handleChange}
-              rows={3}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-              placeholder="Any additional notes or thoughts about this application..."
+              rows={2}
+              className="mt-1.5 w-full px-3 py-2 text-[13px] border border-[var(--hairline-strong)] rounded-[8px] bg-[hsl(var(--surface-card))] resize-none"
+              placeholder="Referral contact, salary range discussed, follow-up date"
             />
           </div>
+          </div>
 
-          <div className="flex justify-end space-x-3 pt-4 border-t border-slate-200">
-            <Button 
-              type="button" 
-              variant="outline" 
+          <div className="px-5 sm:px-6 py-3.5 border-t border-[var(--hairline)] bg-[hsl(var(--surface-page))] flex justify-end gap-2 flex-shrink-0">
+            <Button
+              type="button"
+              variant="outline"
               onClick={onClose}
               disabled={isLoading}
-              className="px-6 py-2"
+              className="h-9 px-4 rounded-[8px]"
             >
               Cancel
             </Button>
-            <Button 
+            <Button
               type="submit"
               disabled={isLoading || !formData.company.trim() || !formData.position.trim()}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 px-6 py-2"
+              className="h-9 px-4 rounded-[8px] bg-[hsl(var(--ink-primary))] hover:bg-[hsl(0_0%_18%)] text-[hsl(var(--surface-card))]"
             >
-              {isLoading ? 'Saving...' : isEditing ? 'Update Application' : 'Add Application'}
+              {isLoading ? 'Saving...' : isEditing ? 'Save changes' : 'Add application'}
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };

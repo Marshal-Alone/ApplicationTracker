@@ -1,103 +1,85 @@
-
 import React from 'react';
-import { Briefcase, Clock, CheckCircle, TrendingUp, Sparkles } from 'lucide-react';
-
-interface JobApplication {
-  id: string;
-  company: string;
-  position: string;
-  status: 'Applied' | 'Interview Scheduled' | 'Under Review' | 'Rejected' | 'Offer';
-  appliedDate: string;
-}
+import { Interview, JobApplication } from '@/types/tracker';
 
 interface StatsCardsProps {
   applications: JobApplication[];
+  interviews?: Interview[];
 }
 
-export const StatsCards: React.FC<StatsCardsProps> = ({ applications }) => {
+export const StatsCards: React.FC<StatsCardsProps> = ({ applications, interviews = [] }) => {
   const totalApplications = applications.length;
-  const interviewsScheduled = applications.filter(app => app.status === 'Interview Scheduled').length;
-  const underReview = applications.filter(app => app.status === 'Under Review').length;
-  const offers = applications.filter(app => app.status === 'Offer').length;
+  const underReview = applications.filter((app) => app.status === 'Under Review').length;
+  const interviewsCount = applications.filter(
+    (app) => app.status === 'Interview Scheduled'
+  ).length;
+  const scheduledUpcoming = interviews.filter(
+    (iv) => iv.status === 'Scheduled' && new Date(`${iv.date}T${iv.time || '09:00'}`) >= new Date()
+  ).length;
+  const offers = applications.filter((app) => app.status === 'Offer').length;
+  const activeCount = applications.filter((app) => app.status !== 'Rejected').length;
 
-  const calculatePercentage = (count: number) => {
-    if (totalApplications === 0) return null;
-    return Math.round((count / totalApplications) * 100);
+  const pct = (count: number) => {
+    if (totalApplications === 0) return '0%';
+    return `${Math.round((count / totalApplications) * 100)}%`;
   };
-
-  const interviewPercentage = calculatePercentage(interviewsScheduled);
-  const reviewPercentage = calculatePercentage(underReview);
-  const offerPercentage = calculatePercentage(offers);
 
   const stats = [
     {
-      title: 'Total Applications',
+      label: 'Total applications',
       value: totalApplications,
-      icon: Briefcase,
-      gradient: 'from-blue-500 to-blue-600',
-      bgGradient: 'from-blue-50 to-blue-100',
-      textColor: 'text-blue-700',
-      change: null,
-      changeColor: 'text-emerald-600'
+      meta:
+        totalApplications === 0
+          ? 'No roles logged yet'
+          : `${activeCount} active in pipeline`,
+      accent: false,
     },
     {
-      title: 'Under Review',
+      label: 'Under review',
       value: underReview,
-      icon: Clock,
-      gradient: 'from-amber-500 to-orange-500',
-      bgGradient: 'from-amber-50 to-orange-100',
-      textColor: 'text-amber-700',
-      change: reviewPercentage ? `${reviewPercentage}%` : null,
-      changeColor: 'text-emerald-600'
+      meta: `${pct(underReview)} of total`,
+      accent: false,
     },
     {
-      title: 'Interviews Scheduled',
-      value: interviewsScheduled,
-      icon: CheckCircle,
-      gradient: 'from-emerald-500 to-green-600',
-      bgGradient: 'from-emerald-50 to-green-100',
-      textColor: 'text-emerald-700',
-      change: interviewPercentage ? `${interviewPercentage}%` : null,
-      changeColor: 'text-emerald-600'
+      label: 'Interviews',
+      value: Math.max(interviewsCount, scheduledUpcoming),
+      meta:
+        scheduledUpcoming > 0
+          ? `${scheduledUpcoming} upcoming scheduled`
+          : `${pct(interviewsCount)} interview rate`,
+      accent: scheduledUpcoming > 0 || interviewsCount > 0,
     },
     {
-      title: 'Job Offers',
+      label: 'Offers',
       value: offers,
-      icon: Sparkles,
-      gradient: 'from-purple-500 to-pink-600',
-      bgGradient: 'from-purple-50 to-pink-100',
-      textColor: 'text-purple-700',
-      change: offerPercentage ? `${offerPercentage}%` : null,
-      changeColor: 'text-emerald-600'
-    }
+      meta: offers > 0 ? `${pct(offers)} conversion rate` : 'No offers recorded',
+      accent: offers > 0,
+    },
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      {stats.map((stat, index) => (
-        <div key={index} className="group relative bg-white rounded-2xl shadow-sm hover:shadow-xl border border-gray-100 p-6 transition-all duration-300 hover:-translate-y-1">
-          <div className="absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity duration-300"></div>
-          
-          <div className="flex items-center justify-between mb-6">
-            <div className={`w-14 h-14 bg-gradient-to-r ${stat.bgGradient} rounded-2xl flex items-center justify-center shadow-lg`}>
-              <stat.icon className={`w-7 h-7 ${stat.textColor}`} />
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {stats.map((stat) => (
+        <div
+          key={stat.label}
+          className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline p-5 flex flex-col justify-between gap-4"
+        >
+          <div className="text-[13px] leading-5 font-normal text-[hsl(var(--ink-secondary))]">
+            {stat.label}
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-[30px] leading-none font-medium tracking-[-0.02em] font-mono-num text-[hsl(var(--ink-primary))]">
+              {stat.value}
             </div>
-            {stat.change && (
-              <div className="flex items-center space-x-1 bg-emerald-50 px-3 py-1 rounded-full">
-                <TrendingUp className="w-3 h-3 text-emerald-600" />
-                <span className={`text-sm font-semibold ${stat.changeColor}`}>
-                  {stat.change}
-                </span>
-              </div>
-            )}
+            <div
+              className={`text-[12px] leading-4 font-mono-num ${
+                stat.accent
+                  ? 'text-[hsl(var(--accent-ink))]'
+                  : 'text-[hsl(var(--ink-muted))]'
+              }`}
+            >
+              {stat.meta}
+            </div>
           </div>
-          
-          <div>
-            <h3 className="text-3xl font-bold text-gray-900 mb-2">{stat.value}</h3>
-            <p className="text-gray-600 text-sm font-medium">{stat.title}</p>
-          </div>
-          
-          <div className={`absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r ${stat.gradient} rounded-b-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
         </div>
       ))}
     </div>

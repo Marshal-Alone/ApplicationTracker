@@ -1,9 +1,47 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, MoreHorizontal, Building2, Calendar, ExternalLink, MapPin, DollarSign, Eye, Edit3, Trash2, Briefcase, Clock } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Plus,
+  MoreHorizontal,
+  Building2,
+  Calendar,
+  ExternalLink,
+  MapPin,
+  Banknote,
+  Eye,
+  Edit3,
+  Trash2,
+  Briefcase,
+  LayoutGrid,
+  List,
+  X,
+  CheckCircle2,
+  AlertTriangle,
+  Copy,
+  Check,
+  MessageSquare,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { SelectField } from '@/components/ui/select-field';
 import { ApplicationForm } from './ApplicationForm';
-import { useToast } from '@/hooks/use-toast';
+import { InterviewFormDialog } from './InterviewFormDialog';
+import { StagePips } from './StagePips';
+import { useAuth } from '@/context/AuthContext';
+import { useTracker } from '@/context/TrackerContext';
+import {
+  APPLICATION_STATUSES,
+  extractDomain,
+  extractRequirementsList,
+  formatCompensation,
+  formatShortDate,
+  safeExternalUrl,
+} from '@/lib/formatters';
+import {
+  addDaysIso,
+  analyzeJobForFresher,
+  generateOutreachTemplates,
+} from '@/lib/fresherTools';
+import { ApplicationStatus, JobApplication } from '@/types/tracker';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,796 +55,1156 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { useAuth } from '@/context/AuthContext';
 
-interface JobApplication {
-  id: string;
-  company: string;
-  position: string;
-  location?: string;
-  salary?: string;
-  jobUrl?: string;
-  description?: string;
-  status: 'Applied' | 'Interview Scheduled' | 'Under Review' | 'Rejected' | 'Offer';
-  appliedDate: string;
-  notes?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
+type SortOption = 'newest' | 'oldest' | 'company';
 
-const statusConfig = {
-  'Applied': { 
-    color: 'bg-blue-50 text-blue-700 border-blue-200', 
-    icon: '📝',
-    gradient: 'from-blue-500 to-blue-600',
-    dotColor: 'bg-blue-500'
-  },
-  'Interview Scheduled': { 
-    color: 'bg-emerald-50 text-emerald-700 border-emerald-200', 
-    icon: '📅',
-    gradient: 'from-emerald-500 to-emerald-600',
-    dotColor: 'bg-emerald-500'
-  },
-  'Under Review': { 
-    color: 'bg-amber-50 text-amber-700 border-amber-200', 
-    icon: '👀',
-    gradient: 'from-amber-500 to-amber-600',
-    dotColor: 'bg-amber-500'
-  },
-  'Rejected': { 
-    color: 'bg-red-50 text-red-700 border-red-200', 
-    icon: '❌',
-    gradient: 'from-red-500 to-red-600',
-    dotColor: 'bg-red-500'
-  },
-  'Offer': { 
-    color: 'bg-purple-50 text-purple-700 border-purple-200', 
-    icon: '🎉',
-    gradient: 'from-purple-500 to-purple-600',
-    dotColor: 'bg-purple-500'
-  }
+const CompanyMark: React.FC<{
+  name: string;
+  logoUrl?: string;
+  size?: 'sm' | 'md' | 'lg';
+}> = ({ name, logoUrl, size = 'md' }) => {
+  const [imgFailed, setImgFailed] = useState(false);
+  const safeLogo = safeExternalUrl(logoUrl);
+
+  const sizeClasses =
+    size === 'lg'
+      ? 'w-11 h-11 rounded-[10px] text-[16px]'
+      : size === 'sm'
+        ? 'w-8 h-8 rounded-[6px] text-[12px]'
+        : 'w-9 h-9 rounded-[8px] text-[13px]';
+
+  return (
+    <div
+      className={`${sizeClasses} bg-[hsl(var(--surface-raised))] border border-[var(--hairline)] flex items-center justify-center font-medium text-[hsl(var(--ink-primary))] flex-shrink-0 overflow-hidden`}
+    >
+      {safeLogo && !imgFailed ? (
+        <img
+          src={safeLogo}
+          alt={`${name} logo`}
+          onError={() => setImgFailed(true)}
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        name.charAt(0).toUpperCase()
+      )}
+    </div>
+  );
 };
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://job-hunter-backend-sigma.vercel.app';
-
 export const Applications = () => {
-  const { token } = useAuth();
-  const [applications, setApplications] = useState<JobApplication[]>([]);
+  const { fresherProfile } = useAuth();
+  const {
+    applications,
+    isLoading,
+    searchQuery,
+    setSearchQuery,
+    syncMode,
+    createApplication,
+    updateApplication,
+    deleteApplication,
+    createInterview,
+    runAiJobMatch,
+  } = useTracker();
+
   const [showForm, setShowForm] = useState(false);
   const [editingApp, setEditingApp] = useState<JobApplication | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState('All');
-  const [isLoading, setIsLoading] = useState(true);
-  const [backendConnected, setBackendConnected] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<string>('All');
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedApp, setSelectedApp] = useState<JobApplication | null>(null);
-  const [showViewDialog, setShowViewDialog] = useState(false);
-  const { toast } = useToast();
+  const [scheduleApp, setScheduleApp] = useState<JobApplication | null>(null);
+  const [outreachTab, setOutreachTab] = useState<'referral' | 'followup' | 'thankyou'>('referral');
+  const [copiedOutreach, setCopiedOutreach] = useState(false);
+  const [runningAiMatch, setRunningAiMatch] = useState(false);
+  const [aiMatchError, setAiMatchError] = useState<string | null>(null);
+  const [copiedHook, setCopiedHook] = useState(false);
 
-  const getHeaders = () => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    return headers;
-  };
-
-  useEffect(() => {
-    loadApplications();
-    checkBackendConnection();
-    
-    // Listen for global refresh events from extension
-    const handleRefresh = () => {
-      console.log('Applications component: Received refresh event, reloading...');
-      loadApplications();
-    };
-    
-    window.addEventListener('jobApplicationAdded', handleRefresh);
-    
-    return () => {
-      window.removeEventListener('jobApplicationAdded', handleRefresh);
-    };
-  }, [token]);
-
-  const checkBackendConnection = async () => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/health`);
-      setBackendConnected(response.ok);
-    } catch (error) {
-      setBackendConnected(false);
-    }
-  };
-
-  const loadApplications = async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(`${BACKEND_URL}/api/applications`, {
-        headers: getHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-        //console.log('Loaded applications from backend:', data.applications);
-        setApplications(data.applications || []);
-        setBackendConnected(true);
-      } else {
-        throw new Error('Backend not available');
-      }
-    } catch (error) {
-      //console.log('Backend not available, using localStorage');
-      setBackendConnected(false);
-      
-      const savedApplications = localStorage.getItem('jobApplications');
-      if (savedApplications) {
-        try {
-          const parsed = JSON.parse(savedApplications);
-          setApplications(Array.isArray(parsed) ? parsed : []);
-        } catch (error) {
-          console.error('Error loading from localStorage:', error);
-          setApplications([]);
-        }
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const addApplication = async (applicationData: Partial<JobApplication>) => {
-    //console.log('Adding application:', applicationData);
-    
-    if (!applicationData.company && !applicationData.position) {
-      console.warn('Insufficient application data:', applicationData);
-      return;
-    }
-
-    const newApplication = {
-      company: applicationData.company || 'Unknown Company',
-      position: applicationData.position || 'Unknown Position',
-      location: applicationData.location || '',
-      salary: applicationData.salary || '',
-      jobUrl: applicationData.jobUrl || '',
-      description: applicationData.description || '',
-      status: (applicationData.status as JobApplication['status']) || 'Applied',
-      appliedDate: applicationData.appliedDate || new Date().toISOString().split('T')[0],
-      notes: applicationData.notes || ''
-    };
-
-    if (backendConnected) {
-      try {
-        const response = await fetch(`${BACKEND_URL}/api/applications`, {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify(newApplication)
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          //console.log('Application added successfully:', result.data);
-          loadApplications();
-          toast({
-            title: "Application Added Successfully! 🎉",
-            description: `${newApplication.position} at ${newApplication.company}`,
-          });
-          return;
-        } else if (response.status === 409) {
-          toast({
-            title: "Duplicate Application",
-            description: "This application already exists in your tracker",
-            variant: "destructive"
-          });
-          return;
-        } else {
-          throw new Error('Failed to save to backend');
-        }
-      } catch (error) {
-        console.error('Error adding to backend:', error);
-      }
-    }
-    
-    // Fallback to localStorage
-    const localApplication: JobApplication = {
-      id: Date.now().toString(),
-      ...newApplication
-    };
-    
-    const isDuplicate = applications.some(app => 
-      app.company.toLowerCase() === localApplication.company.toLowerCase() &&
-      app.position.toLowerCase() === localApplication.position.toLowerCase()
-    );
-    
-    if (isDuplicate) {
-      toast({
-        title: "Duplicate Application",
-        description: "This application already exists in your tracker",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    const updatedApplications = [localApplication, ...applications];
-    setApplications(updatedApplications);
-    localStorage.setItem('jobApplications', JSON.stringify(updatedApplications));
-    
-    toast({
-      title: "Application Added",
-      description: `Added ${localApplication.position} at ${localApplication.company}`,
+  const filteredApplications = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const list = applications.filter((app) => {
+      const matchesSearch =
+        !q ||
+        app.company.toLowerCase().includes(q) ||
+        app.position.toLowerCase().includes(q) ||
+        (app.location && app.location.toLowerCase().includes(q)) ||
+        (app.salary && app.salary.toLowerCase().includes(q)) ||
+        (app.requirements && app.requirements.some((r) => r.toLowerCase().includes(q))) ||
+        (app.notes && app.notes.toLowerCase().includes(q)) ||
+        (app.description && app.description.toLowerCase().includes(q));
+      const matchesFilter = filterStatus === 'All' || app.status === filterStatus;
+      return matchesSearch && matchesFilter;
     });
-  };
 
-  const updateApplication = async (id: string, applicationData: Partial<JobApplication>) => {
-    if (backendConnected) {
-      try {
-        const response = await fetch(`${BACKEND_URL}/api/applications/${id}`, {
-          method: 'PUT',
-          headers: getHeaders(),
-          body: JSON.stringify(applicationData)
-        });
-
-        if (response.ok) {
-          loadApplications();
-          toast({
-            title: "Application Updated",
-            description: "Application has been updated successfully",
-          });
-          return;
-        }
-      } catch (error) {
-        console.error('Error updating backend:', error);
+    return [...list].sort((a, b) => {
+      if (sortBy === 'company') {
+        return a.company.localeCompare(b.company);
       }
-    }
-    
-    // Fallback to localStorage
-    const updatedApplications = applications.map(app => 
-      app.id === id ? { ...app, ...applicationData } : app
-    );
-    setApplications(updatedApplications);
-    localStorage.setItem('jobApplications', JSON.stringify(updatedApplications));
-    
-    toast({
-      title: "Application Updated",
-      description: "Application updated successfully",
+      const dateA = new Date(a.appliedDate || a.createdAt || 0).getTime();
+      const dateB = new Date(b.appliedDate || b.createdAt || 0).getTime();
+      return sortBy === 'oldest' ? dateA - dateB : dateB - dateA;
     });
-  };
+  }, [applications, searchQuery, filterStatus, sortBy]);
 
-  const deleteApplication = async (id: string) => {
-    if (backendConnected) {
-      try {
-        const response = await fetch(`${BACKEND_URL}/api/applications/${id}`, {
-          method: 'DELETE',
-          headers: getHeaders(),
-        });
-        
-        if (response.ok) {
-          loadApplications();
-          toast({
-            title: "Application Deleted",
-            description: "Application has been removed successfully",
-          });
-          return;
-        }
-      } catch (error) {
-        console.error('Error deleting from backend:', error);
-      }
-    }
-    
-    // Fallback to localStorage
-    const updatedApplications = applications.filter(app => app.id !== id);
-    setApplications(updatedApplications);
-    localStorage.setItem('jobApplications', JSON.stringify(updatedApplications));
-    
-    toast({
-      title: "Application Deleted",
-      description: "Application removed successfully",
-    });
-  };
-
-  const editApplication = (app: JobApplication) => {
-    setEditingApp(app);
-    setShowForm(true);
-  };
-
-  const viewApplication = (app: JobApplication) => {
-    setSelectedApp(app);
-    setShowViewDialog(true);
-  };
-
-  const filteredApplications = applications.filter(app => {
-    const searchLower = searchTerm.toLowerCase();
-    const matchesSearch = !searchTerm || (
-      app.company.toLowerCase().includes(searchLower) ||
-      app.position.toLowerCase().includes(searchLower) ||
-      (app.location && app.location.toLowerCase().includes(searchLower)) ||
-      (app.salary && app.salary.toLowerCase().includes(searchLower))
-    );
-    const matchesFilter = filterStatus === 'All' || app.status === filterStatus;
-    return matchesSearch && matchesFilter;
-  });
-
-  const updateApplicationStatus = async (id: string, newStatus: JobApplication['status']) => {
-    await updateApplication(id, { status: newStatus });
-  };
-
-  const handleFormSubmit = async (applicationData: Partial<JobApplication>) => {
+  const handleFormSubmit = async (data: Partial<JobApplication>) => {
     if (editingApp) {
-      await updateApplication(editingApp.id, applicationData);
+      await updateApplication(editingApp.id, data);
       setEditingApp(null);
     } else {
-      await addApplication(applicationData);
+      await createApplication(data);
     }
     setShowForm(false);
   };
 
-  const handleFormClose = () => {
-    setShowForm(false);
-    setEditingApp(null);
+  const selectedRequirements = useMemo(
+    () =>
+      selectedApp
+        ? extractRequirementsList(selectedApp.description, selectedApp.requirements)
+        : [],
+    [selectedApp]
+  );
+  const selectedJobHref = selectedApp ? safeExternalUrl(selectedApp.jobUrl) : null;
+  const selectedApplyHref = selectedApp ? safeExternalUrl(selectedApp.applyUrl) : null;
+  const selectedCompanyHref = selectedApp ? safeExternalUrl(selectedApp.companyUrl) : null;
+
+  const selectedAnalysis = useMemo(
+    () =>
+      selectedApp
+        ? analyzeJobForFresher(
+            selectedApp,
+            fresherProfile.skills,
+            fresherProfile.experienceYears
+          )
+        : null,
+    [selectedApp, fresherProfile.skills, fresherProfile.experienceYears]
+  );
+
+  const selectedOutreach = useMemo(
+    () =>
+      selectedApp && selectedAnalysis
+        ? generateOutreachTemplates({
+            company: selectedApp.company,
+            position: selectedApp.position,
+            jobUrl: selectedApp.jobUrl,
+            applyUrl: selectedApp.applyUrl,
+            referralContact: selectedApp.referralContact,
+            matchedSkills: selectedAnalysis.matchedSkills,
+            userSkills: fresherProfile.skills,
+          })
+        : null,
+    [selectedApp, selectedAnalysis, fresherProfile.skills]
+  );
+
+  const activeOutreachMessage = selectedOutreach
+    ? outreachTab === 'referral'
+      ? selectedOutreach.referralDm
+      : outreachTab === 'followup'
+        ? selectedOutreach.followUpNote
+        : selectedOutreach.thankYouNote
+    : '';
+
+  const handleCopyOutreach = () => {
+    if (!activeOutreachMessage) return;
+    navigator.clipboard.writeText(activeOutreachMessage);
+    setCopiedOutreach(true);
+    setTimeout(() => setCopiedOutreach(false), 1800);
+  };
+
+  const handleRunAiMatch = async () => {
+    if (!selectedApp || runningAiMatch) return;
+    setRunningAiMatch(true);
+    setAiMatchError(null);
+    try {
+      const res = await runAiJobMatch(selectedApp);
+      if (res.ok && res.aiMatch) {
+        setSelectedApp((prev) => (prev ? { ...prev, aiMatch: res.aiMatch } : null));
+      } else {
+        setAiMatchError(res.error || 'Could not generate AI match analysis');
+      }
+    } finally {
+      setRunningAiMatch(false);
+    }
   };
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Loading applications...</p>
+      <div className="space-y-6">
+        <div className="h-12 w-60 bg-[hsl(var(--surface-raised))] rounded-[8px]" />
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-52 bg-[hsl(var(--surface-raised))] rounded-[12px]" />
+          ))}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Connection Status */}
-        {!backendConnected && (
-          <div className="mb-6 bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-lg">
-            <div className="flex items-center">
-              <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse mr-3"></div>
-              <span className="text-amber-800 text-sm font-medium">
-                Backend offline - Using local storage
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Job Applications</h1>
-              <div className="flex items-center space-x-6 text-gray-600">
-                <div className="flex items-center space-x-2">
-                  <Briefcase className="w-5 h-5" />
-                  <span className="font-medium">{applications.length} Total Applications</span>
-                </div>
-                {backendConnected && (
-                  <div className="flex items-center space-x-2 px-3 py-1 bg-green-100 rounded-full">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="text-green-700 text-sm font-medium">Live Connected</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            <Button 
-              onClick={() => setShowForm(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 font-medium shadow-sm"
-            >
-              <Plus className="w-5 h-5 mr-2" />
-              New Application
-            </Button>
-          </div>
-
-          {/* Search and Filter */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
-              <div className="flex flex-1 gap-4 items-center w-full lg:w-auto">
-                <div className="relative flex-1 max-w-md">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                  <Input
-                    placeholder="Search companies, positions, locations..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 h-11 border-gray-300 focus:border-blue-500 focus:ring-blue-500 rounded-lg"
-                  />
-                </div>
-                
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white min-w-[200px] font-medium text-gray-700"
-                >
-                  <option value="All">All Status ({applications.length})</option>
-                  <option value="Applied">Applied ({applications.filter(app => app.status === 'Applied').length})</option>
-                  <option value="Under Review">Under Review ({applications.filter(app => app.status === 'Under Review').length})</option>
-                  <option value="Interview Scheduled">Interview Scheduled ({applications.filter(app => app.status === 'Interview Scheduled').length})</option>
-                  <option value="Offer">Offer ({applications.filter(app => app.status === 'Offer').length})</option>
-                  <option value="Rejected">Rejected ({applications.filter(app => app.status === 'Rejected').length})</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setViewMode('grid')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                    viewMode === 'grid' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Grid View
-                </button>
-                <button
-                  onClick={() => setViewMode('list')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                    viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  List View
-                </button>
-              </div>
-            </div>
+    <div className="space-y-6">
+      {/* Header Row */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.02em] text-[hsl(var(--ink-primary))]">
+            Applications
+          </h1>
+          <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[13px] text-[hsl(var(--ink-secondary))]">
+            <span className="font-mono-num">
+              {applications.length} total role{applications.length === 1 ? '' : 's'}
+            </span>
+            <span className="text-[var(--hairline-strong)]">|</span>
+            <span className="inline-flex items-center gap-1.5 text-[hsl(var(--ink-muted))]">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  syncMode === 'synced'
+                    ? 'bg-[hsl(var(--semantic-positive))]'
+                    : 'bg-[hsl(var(--ink-muted))]'
+                }`}
+              />
+              {syncMode === 'synced' ? 'Synced to account' : 'Saved locally in browser'}
+            </span>
           </div>
         </div>
 
-        {/* Results count */}
-        {searchTerm && (
-          <div className="mb-4 text-gray-600 text-sm font-medium">
-            Showing {filteredApplications.length} result{filteredApplications.length !== 1 ? 's' : ''} for "{searchTerm}"
-          </div>
-        )}
+        <Button
+          type="button"
+          onClick={() => {
+            setEditingApp(null);
+            setShowForm(true);
+          }}
+          className="h-9 px-4 rounded-[8px] bg-[hsl(var(--ink-primary))] hover:bg-[hsl(0_0%_18%)] text-[hsl(var(--surface-card))] font-medium text-[13px] self-start sm:self-auto"
+        >
+          <Plus className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
+          New application
+        </Button>
+      </div>
 
-        {/* Applications Display */}
-        {filteredApplications.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-16 text-center">
-            <div className="max-w-md mx-auto">
-              <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <Building2 className="w-10 h-10 text-gray-400" />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-3">
-                {applications.length === 0 ? 'Ready to Start Tracking' : 'No Results Found'}
-              </h3>
-              <p className="text-gray-600 mb-8 leading-relaxed">
-                {applications.length === 0 
-                  ? 'Organize your job search with our professional application tracker. Add your first application to get started.'
-                  : 'Try adjusting your search terms or filters to find what you\'re looking for.'
-                }
-              </p>
-              {applications.length === 0 && (
-                <Button 
-                  onClick={() => setShowForm(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 font-medium"
-                >
-                  <Plus className="w-5 h-5 mr-2" />
-                  Add Your First Application
-                </Button>
-              )}
-            </div>
+      {/* Filter & View Bar (reuses single Header Search instead of duplicating a second search bar) */}
+      <div className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Status Pills */}
+          <SelectField
+            ariaLabel="Filter by stage"
+            value={filterStatus}
+            onValueChange={setFilterStatus}
+            className="min-w-[156px]"
+            options={[
+              { value: 'All', label: `All stages (${applications.length})` },
+              ...APPLICATION_STATUSES.map((status) => ({
+                value: status,
+                label: `${status} (${applications.filter((a) => a.status === status).length})`,
+              })),
+            ]}
+          />
+
+          <SelectField
+            ariaLabel="Sort applications"
+            value={sortBy}
+            onValueChange={(v) => setSortBy(v as SortOption)}
+            className="min-w-[136px] text-[hsl(var(--ink-secondary))] font-normal"
+            options={[
+              { value: 'newest', label: 'Newest first' },
+              { value: 'oldest', label: 'Oldest first' },
+              { value: 'company', label: 'Company A–Z' },
+            ]}
+          />
+
+          {searchQuery.trim() && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[6px] bg-[var(--accent-tint)] text-[hsl(var(--accent-ink))] text-[12px] font-medium"
+            >
+              <span>Search: &ldquo;{searchQuery}&rdquo;</span>
+              <X className="w-3 h-3" strokeWidth={1.5} />
+            </button>
+          )}
+        </div>
+
+        <div
+          className="inline-flex items-center bg-[hsl(var(--surface-raised))] p-1 rounded-[8px] border border-[var(--hairline)] self-start md:self-auto"
+          role="group"
+          aria-label="View mode"
+        >
+          <button
+            type="button"
+            onClick={() => setViewMode('grid')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-[12px] font-medium transition-ui ${
+              viewMode === 'grid'
+                ? 'bg-[hsl(var(--surface-card))] text-[hsl(var(--ink-primary))] shadow-[0_1px_2px_rgba(23,23,23,0.06)]'
+                : 'text-[hsl(var(--ink-secondary))] hover:text-[hsl(var(--ink-primary))]'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" strokeWidth={1.5} />
+            Grid
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-[12px] font-medium transition-ui ${
+              viewMode === 'list'
+                ? 'bg-[hsl(var(--surface-card))] text-[hsl(var(--ink-primary))] shadow-[0_1px_2px_rgba(23,23,23,0.06)]'
+                : 'text-[hsl(var(--ink-secondary))] hover:text-[hsl(var(--ink-primary))]'
+            }`}
+          >
+            <List className="w-3.5 h-3.5" strokeWidth={1.5} />
+            List
+          </button>
+        </div>
+      </div>
+
+      {/* Results Display */}
+      {filteredApplications.length === 0 ? (
+        <div className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline p-12 text-center">
+          <div className="w-11 h-11 rounded-[10px] bg-[hsl(var(--surface-raised))] border border-[var(--hairline)] flex items-center justify-center mx-auto mb-3">
+            <Building2 className="w-5 h-5 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
           </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {filteredApplications.map((app) => (
-              <div key={app.id} className="group bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
-                {/* Card Header - Fixed layout */}
-                <div className="p-6 border-b border-gray-100">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center space-x-3 min-w-0 flex-1 pr-2">
-                      <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white font-semibold text-lg shadow-sm flex-shrink-0">
-                        {app.company.charAt(0).toUpperCase()}
-                      </div>
+          <h2 className="text-[16px] font-medium text-[hsl(var(--ink-primary))] mb-1">
+            {applications.length === 0 ? 'No applications tracked' : 'No matching applications'}
+          </h2>
+          <p className="text-[13px] text-[hsl(var(--ink-muted))] mb-5 max-w-sm mx-auto">
+            {applications.length === 0
+              ? 'Add your first role manually or capture job pages using the Chrome extension'
+              : 'Adjust the stage filter or clear the search query to see all entries'}
+          </p>
+          {applications.length === 0 && (
+            <Button
+              type="button"
+              onClick={() => setShowForm(true)}
+              className="h-9 px-4 rounded-[8px] bg-[hsl(var(--ink-primary))] hover:bg-[hsl(0_0%_18%)] text-[hsl(var(--surface-card))] font-medium text-[13px]"
+            >
+              <Plus className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
+              Add first application
+            </Button>
+          )}
+        </div>
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredApplications.map((app) => {
+            const href = safeExternalUrl(app.jobUrl);
+            const applyHref = safeExternalUrl(app.applyUrl);
+            const domain = extractDomain(app.jobUrl || app.applyUrl);
+            const compensation = formatCompensation(app.salary);
+
+            return (
+              <article
+                key={app.id}
+                className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline p-5 flex flex-col justify-between gap-4 hover:border-[var(--hairline-strong)] transition-ui"
+              >
+                <div className="space-y-3.5">
+                  {/* Top Row */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <CompanyMark name={app.company} logoUrl={app.companyLogo} size="md" />
                       <div className="min-w-0 flex-1">
-                        <h3 className="font-semibold text-gray-900 text-base mb-1 truncate" title={app.company}>
+                        <h3 className="text-[15px] leading-5 font-medium text-[hsl(var(--ink-primary))] truncate">
                           {app.company}
                         </h3>
-                        <p className="text-gray-600 font-medium text-sm truncate" title={app.position}>{app.position}</p>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedApp(app)}
+                          className="text-left text-[13px] leading-5 text-[hsl(var(--ink-secondary))] hover:text-[hsl(var(--accent-ink))] line-clamp-2 mt-0.5 transition-ui"
+                        >
+                          {app.position}
+                        </button>
                       </div>
                     </div>
-                    
-                    {/* Fixed action button positioning */}
-                    <div className="flex-shrink-0 ml-2">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity rounded-lg h-8 w-8 p-0 flex-shrink-0">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48 bg-white border shadow-lg z-50">
-                          <DropdownMenuItem onClick={() => viewApplication(app)} className="cursor-pointer">
-                            <Eye className="w-4 h-4 mr-3" />
-                            View Details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => editApplication(app)} className="cursor-pointer">
-                            <Edit3 className="w-4 h-4 mr-3" />
-                            Edit Application
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => deleteApplication(app.id)}
-                            className="text-red-600 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4 mr-3" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
 
-                  {/* Status and Date */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <div className={`w-2 h-2 rounded-full ${statusConfig[app.status].dotColor}`}></div>
-                      <span className="text-xs font-medium text-gray-600">{app.status}</span>
-                    </div>
-                    <div className="flex items-center space-x-1 text-gray-500">
-                      <Calendar className="w-3 h-3" />
-                      <span className="text-xs">{app.appliedDate}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card Content */}
-                <div className="p-6 space-y-4">
-                  {app.location && (
-                    <div className="flex items-center space-x-2 text-gray-600">
-                      <MapPin className="w-4 h-4 text-gray-400" />
-                      <span className="text-sm">{app.location}</span>
-                    </div>
-                  )}
-                  {app.salary && (
-                    <div className="flex items-center space-x-2 text-gray-600">
-                      <DollarSign className="w-4 h-4 text-gray-400" />
-                      <span className="text-sm">{app.salary}</span>
-                    </div>
-                  )}
-                  
-                  {/* Status Selector */}
-                  <div className="pt-2">
-                    <select
-                      value={app.status}
-                      onChange={(e) => updateApplicationStatus(app.id, e.target.value as JobApplication['status'])}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50 cursor-pointer"
-                    >
-                      <option value="Applied">📝 Applied</option>
-                      <option value="Under Review">👀 Under Review</option>
-                      <option value="Interview Scheduled">📅 Interview Scheduled</option>
-                      <option value="Offer">🎉 Offer</option>
-                      <option value="Rejected">❌ Rejected</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="divide-y divide-gray-100">
-              {filteredApplications.map((app) => (
-                <div key={app.id} className="p-6 hover:bg-gray-50 transition-colors group">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-4 flex-1 min-w-0 pr-4">
-                      <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-semibold text-sm shadow-sm flex-shrink-0">
-                        {app.company.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-3 mb-1">
-                          <h3 className="font-semibold text-gray-900 text-base truncate flex-1" title={app.company}>{app.company}</h3>
-                          {app.jobUrl && (
-                            <button 
-                              onClick={() => window.open(app.jobUrl, '_blank')}
-                              className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-md hover:bg-gray-100 flex-shrink-0"
-                              title="View job posting"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-gray-700 font-medium text-sm mb-2 truncate" title={app.position}>{app.position}</p>
-                        <div className="flex items-center space-x-4 text-xs text-gray-500">
-                          {app.location && (
-                            <div className="flex items-center space-x-1">
-                              <MapPin className="w-3 h-3" />
-                              <span className="truncate">{app.location}</span>
-                            </div>
-                          )}
-                          {app.salary && (
-                            <div className="flex items-center space-x-1">
-                              <DollarSign className="w-3 h-3" />
-                              <span className="truncate">{app.salary}</span>
-                            </div>
-                          )}
-                          <div className="flex items-center space-x-1">
-                            <Calendar className="w-3 h-3" />
-                            <span>Applied {app.appliedDate}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Fixed action buttons positioning */}
-                    <div className="flex items-center space-x-4 flex-shrink-0">
-                      <select
-                        value={app.status}
-                        onChange={(e) => updateApplicationStatus(app.id, e.target.value as JobApplication['status'])}
-                        className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50 cursor-pointer min-w-[140px]"
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--ink-primary))] flex-shrink-0"
+                          aria-label={`More actions for ${app.company}`}
+                        >
+                          <MoreHorizontal className="w-4 h-4" strokeWidth={1.5} />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="w-44 bg-[hsl(var(--surface-card))] border border-[var(--hairline-strong)] rounded-[10px] shadow-[var(--shadow-float)] p-1"
                       >
-                        <option value="Applied">Applied</option>
-                        <option value="Under Review">Under Review</option>
-                        <option value="Interview Scheduled">Interview Scheduled</option>
-                        <option value="Offer">Offer</option>
-                        <option value="Rejected">Rejected</option>
-                      </select>
-                      
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0 flex-shrink-0">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48 bg-white border shadow-lg z-50">
-                          <DropdownMenuItem onClick={() => viewApplication(app)} className="cursor-pointer">
-                            <Eye className="w-4 h-4 mr-3" />
-                            View Details
+                        <DropdownMenuItem
+                          onClick={() => setSelectedApp(app)}
+                          className="cursor-pointer rounded-[6px] text-[13px]"
+                        >
+                          <Eye className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                          View details
+                        </DropdownMenuItem>
+                        {href && (
+                          <DropdownMenuItem asChild className="cursor-pointer rounded-[6px] text-[13px]">
+                            <a href={href} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                              Open posting
+                            </a>
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => editApplication(app)} className="cursor-pointer">
-                            <Edit3 className="w-4 h-4 mr-3" />
-                            Edit Application
+                        )}
+                        {applyHref && applyHref !== href && (
+                          <DropdownMenuItem asChild className="cursor-pointer rounded-[6px] text-[13px]">
+                            <a href={applyHref} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                              Apply link
+                            </a>
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => deleteApplication(app.id)}
-                            className="text-red-600 cursor-pointer"
+                        )}
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setEditingApp(app);
+                            setShowForm(true);
+                          }}
+                          className="cursor-pointer rounded-[6px] text-[13px]"
+                        >
+                          <Edit3 className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setScheduleApp(app)}
+                          className="cursor-pointer rounded-[6px] text-[13px]"
+                        >
+                          <Calendar className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                          Schedule interview
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => deleteApplication(app.id)}
+                          className="cursor-pointer rounded-[6px] text-[13px] text-[hsl(var(--semantic-danger))]"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  {/* Metadata rows */}
+                  <div className="space-y-1.5 text-[13px] text-[hsl(var(--ink-secondary))]">
+                    {app.location && (
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MapPin className="w-4 h-4 text-[hsl(var(--ink-muted))] flex-shrink-0" strokeWidth={1.5} />
+                        <span className="truncate">{app.location}</span>
+                      </div>
+                    )}
+                    {compensation && (
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Banknote className="w-4 h-4 text-[hsl(var(--ink-muted))] flex-shrink-0" strokeWidth={1.5} />
+                        <span className="font-mono-num truncate">{compensation}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-2 text-[12px] font-mono-num text-[hsl(var(--ink-muted))] pt-0.5">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        {formatShortDate(app.appliedDate)}
+                      </span>
+                      <span className="truncate">{domain}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Bottom Pinned Controls */}
+                <div className="pt-3 border-t border-[var(--hairline)] space-y-2.5">
+                  <StagePips status={app.status} />
+
+                  <SelectField
+                    ariaLabel={`Change stage for ${app.company}`}
+                    value={app.status}
+                    onValueChange={(next) =>
+                      updateApplication(app.id, { status: next as ApplicationStatus })
+                    }
+                    className="w-full bg-[hsl(var(--surface-page))] hover:bg-[hsl(var(--surface-raised))]"
+                    options={APPLICATION_STATUSES.map((st) => ({ value: st, label: st }))}
+                  />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[var(--hairline)] text-[12px] font-medium text-[hsl(var(--ink-muted))]">
+                <th className="py-3 px-5 font-medium">Role &amp; company</th>
+                <th className="py-3 px-4 font-medium hidden md:table-cell">Compensation / location</th>
+                <th className="py-3 px-4 font-medium">Stage</th>
+                <th className="py-3 px-4 font-medium hidden sm:table-cell">Applied</th>
+                <th className="py-3 px-5 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--hairline)]">
+              {filteredApplications.map((app) => {
+                const href = safeExternalUrl(app.jobUrl);
+                const compensation = formatCompensation(app.salary);
+
+                return (
+                  <tr
+                    key={app.id}
+                    className="hover:bg-[hsl(var(--surface-page))] transition-ui"
+                  >
+                    <td className="py-3.5 px-5 max-w-xs">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <CompanyMark name={app.company} logoUrl={app.companyLogo} size="sm" />
+                        <div className="min-w-0">
+                          <div className="text-[14px] font-medium text-[hsl(var(--ink-primary))] truncate">
+                            {app.company}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedApp(app)}
+                            className="text-[13px] text-[hsl(var(--ink-secondary))] hover:text-[hsl(var(--accent-ink))] truncate block max-w-full text-left"
                           >
-                            <Trash2 className="w-4 h-4 mr-3" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+                            {app.position}
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4 hidden md:table-cell">
+                      <div className="text-[13px] text-[hsl(var(--ink-secondary))] font-mono-num">
+                        {compensation || '—'}
+                      </div>
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))]">
+                        {app.location || extractDomain(app.jobUrl)}
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <SelectField
+                        ariaLabel={`Change stage for ${app.company}`}
+                        value={app.status}
+                        onValueChange={(next) =>
+                          updateApplication(app.id, { status: next as ApplicationStatus })
+                        }
+                        className="h-8 text-[12px] min-w-[152px]"
+                        options={APPLICATION_STATUSES.map((st) => ({ value: st, label: st }))}
+                      />
+                    </td>
+                    <td className="py-3.5 px-4 hidden sm:table-cell font-mono-num text-[12px] text-[hsl(var(--ink-muted))] whitespace-nowrap">
+                      {formatShortDate(app.appliedDate)}
+                    </td>
+                    <td className="py-3.5 px-5 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {href && (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-[6px] text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--ink-primary))] hover:bg-[hsl(var(--surface-raised))]"
+                            title="Open posting"
+                            aria-label="Open posting"
+                          >
+                            <ExternalLink className="w-4 h-4" strokeWidth={1.5} />
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingApp(app);
+                            setShowForm(true);
+                          }}
+                          className="p-1.5 rounded-[6px] text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--ink-primary))] hover:bg-[hsl(var(--surface-raised))]"
+                          title="Edit"
+                          aria-label="Edit"
+                        >
+                          <Edit3 className="w-4 h-4" strokeWidth={1.5} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteApplication(app.id)}
+                          className="p-1.5 rounded-[6px] text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--semantic-danger))] hover:bg-[hsl(var(--surface-raised))]"
+                          title="Delete"
+                          aria-label="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" strokeWidth={1.5} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-        {/* Application Form Modal */}
-        {showForm && (
-          <ApplicationForm
-            application={editingApp}
-            onClose={handleFormClose}
-            onSubmit={handleFormSubmit}
-          />
-        )}
+      {/* Application Form Modal */}
+      {showForm && (
+        <ApplicationForm
+          application={editingApp}
+          onClose={() => {
+            setShowForm(false);
+            setEditingApp(null);
+          }}
+          onSubmit={handleFormSubmit}
+        />
+      )}
 
-        {/* Application Details Dialog */}
-        <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-xl font-semibold text-gray-900">Application Details</DialogTitle>
-              <DialogDescription className="text-gray-600">
-                Complete information for this job application
-              </DialogDescription>
-            </DialogHeader>
-            {selectedApp && (
-              <div className="space-y-6">
-                {/* Company Header */}
-                <div className="flex items-center space-x-4 p-6 bg-gray-50 rounded-lg">
-                  <div className="w-16 h-16 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-sm flex-shrink-0">
-                    {selectedApp.company.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1">
-                    <h2 className="text-2xl font-bold text-gray-900 mb-1">{selectedApp.company}</h2>
-                    <p className="text-lg text-gray-700 mb-2 font-medium">{selectedApp.position}</p>
-                    <div className="flex items-center space-x-2">
-                      <div className={`w-2 h-2 rounded-full ${statusConfig[selectedApp.status].dotColor}`}></div>
-                      <span className="text-gray-600 font-medium">{selectedApp.status}</span>
+      {/* Application Details Dialog */}
+      <Dialog
+        open={!!selectedApp}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedApp(null);
+            setAiMatchError(null);
+            setCopiedHook(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl p-0 sm:p-0 overflow-hidden gap-0 bg-[hsl(var(--surface-card))] border-[var(--hairline-strong)] rounded-[14px]">
+          {selectedApp && (
+            <>
+              <DialogHeader className="px-5 sm:px-6 pt-5 pb-4 pr-12 border-b border-[var(--hairline)] flex-shrink-0">
+                <div className="flex items-start gap-3.5">
+                  <CompanyMark name={selectedApp.company} logoUrl={selectedApp.companyLogo} size="lg" />
+                  <div className="min-w-0 flex-1">
+                    {selectedCompanyHref ? (
+                      <a
+                        href={selectedCompanyHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[18px] font-medium text-[hsl(var(--ink-primary))] hover:text-[hsl(var(--accent-ink))] hover:underline inline-flex items-center gap-1"
+                      >
+                        <DialogTitle className="text-[18px] font-medium text-inherit">
+                          {selectedApp.company}
+                        </DialogTitle>
+                      </a>
+                    ) : (
+                      <DialogTitle className="text-[18px] font-medium text-[hsl(var(--ink-primary))]">
+                        {selectedApp.company}
+                      </DialogTitle>
+                    )}
+                    <DialogDescription className="text-[14px] text-[hsl(var(--ink-secondary))] mt-0.5">
+                      {selectedApp.position}
+                    </DialogDescription>
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      <StagePips status={selectedApp.status} />
                     </div>
                   </div>
                 </div>
-                
-                {/* Details Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <Calendar className="w-4 h-4 text-gray-600" />
-                        <label className="text-sm font-medium text-gray-700">Application Date</label>
-                      </div>
-                      <p className="text-gray-900 font-medium">{selectedApp.appliedDate}</p>
+              </DialogHeader>
+
+              <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                    <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">Applied date</div>
+                    <div className="text-[14px] font-mono-num text-[hsl(var(--ink-primary))]">
+                      {formatShortDate(selectedApp.appliedDate)}
                     </div>
-                    
-                    {selectedApp.location && (
-                      <div className="bg-gray-50 p-4 rounded-lg">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <MapPin className="w-4 h-4 text-gray-600" />
-                          <label className="text-sm font-medium text-gray-700">Location</label>
-                        </div>
-                        <p className="text-gray-900 font-medium">{selectedApp.location}</p>
-                      </div>
-                    )}
                   </div>
-                  
-                  <div className="space-y-4">
-                    {selectedApp.salary && (
-                      <div className="bg-gray-50 p-4 rounded-lg">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <DollarSign className="w-4 h-4 text-gray-600" />
-                          <label className="text-sm font-medium text-gray-700">Salary</label>
-                        </div>
-                        <p className="text-gray-900 font-medium">{selectedApp.salary}</p>
+
+                  {selectedApp.location && (
+                    <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">Location</div>
+                      <div className="text-[14px] text-[hsl(var(--ink-primary))]">
+                        {selectedApp.location}
                       </div>
-                    )}
-                    
-                    {selectedApp.createdAt && (
-                      <div className="bg-gray-50 p-4 rounded-lg">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <Clock className="w-4 h-4 text-gray-600" />
-                          <label className="text-sm font-medium text-gray-700">Added to Tracker</label>
-                        </div>
-                        <p className="text-gray-900 font-medium">{new Date(selectedApp.createdAt).toLocaleDateString()}</p>
+                    </div>
+                  )}
+
+                  {selectedApp.salary && (
+                    <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">Compensation</div>
+                      <div className="text-[14px] font-mono-num text-[hsl(var(--ink-primary))]">
+                        {formatCompensation(selectedApp.salary)}
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
+
+                  {selectedJobHref && (
+                    <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">Source link</div>
+                      <a
+                        href={selectedJobHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[14px] font-medium text-[hsl(var(--accent-ink))] hover:underline"
+                      >
+                        <Briefcase className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        {extractDomain(selectedApp.jobUrl)}
+                        <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.5} />
+                      </a>
+                    </div>
+                  )}
+
+                  {selectedApplyHref && selectedApplyHref !== selectedJobHref && (
+                    <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">Apply URL</div>
+                      <a
+                        href={selectedApplyHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[14px] font-medium text-[hsl(var(--accent-ink))] hover:underline"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        {extractDomain(selectedApp.applyUrl)}
+                      </a>
+                    </div>
+                  )}
+
+                  {selectedApp.resumeVersion && (
+                    <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">Resume version</div>
+                      <div className="text-[13px] font-mono-num text-[hsl(var(--ink-primary))]">
+                        {selectedApp.resumeVersion}
+                      </div>
+                    </div>
+                  )}
+
+                  {(selectedApp.referralContact || selectedApp.followUpDate) && (
+                    <div className="p-3.5 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                      <div className="text-[12px] text-[hsl(var(--ink-muted))] mb-1">
+                        {selectedApp.referralContact ? 'Referral / contact' : 'Follow-up date'}
+                      </div>
+                      <div className="text-[13px] text-[hsl(var(--ink-primary))]">
+                        {selectedApp.referralContact || formatShortDate(selectedApp.followUpDate || '')}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                
-                {/* Job URL */}
-                {selectedApp.jobUrl && (
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex items-center space-x-2 mb-2">
-                      <ExternalLink className="w-4 h-4 text-gray-600" />
-                      <label className="text-sm font-medium text-gray-700">Job Posting</label>
+
+                {selectedAnalysis && (
+                  <div className="p-4 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)] space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex items-start gap-2">
+                        {selectedAnalysis.experience.kind === 'experienced_mismatch' ||
+                        selectedAnalysis.experience.kind === 'stretch' ? (
+                          <AlertTriangle
+                            className="w-4 h-4 text-[hsl(var(--semantic-warning))] mt-0.5 flex-shrink-0"
+                            strokeWidth={1.75}
+                          />
+                        ) : (
+                          <CheckCircle2
+                            className="w-4 h-4 text-[hsl(var(--accent-ink))] mt-0.5 flex-shrink-0"
+                            strokeWidth={1.75}
+                          />
+                        )}
+                        <div>
+                          <div className="text-[13px] font-medium text-[hsl(var(--ink-primary))]">
+                            {selectedAnalysis.experience.label}
+                          </div>
+                          <p className="text-[12px] text-[hsl(var(--ink-muted))] mt-0.5">
+                            {selectedAnalysis.experience.guidance}
+                          </p>
+                        </div>
+                      </div>
+                      {selectedAnalysis.isFollowUpDue && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            const nextDate = addDaysIso(new Date().toISOString().split('T')[0], 7);
+                            await updateApplication(selectedApp.id, { followUpDate: nextDate });
+                            setSelectedApp((prev) =>
+                              prev ? { ...prev, followUpDate: nextDate } : null
+                            );
+                          }}
+                          className="h-7 px-2.5 text-[11px] rounded-[6px] border-[var(--hairline-strong)]"
+                        >
+                          Snooze follow-up +7d
+                        </Button>
+                      )}
                     </div>
-                    <a 
-                      href={selectedApp.jobUrl} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center space-x-2 text-blue-600 hover:text-blue-700 font-medium underline"
-                    >
-                      <span>View Original Job Posting</span>
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
+
+                    {selectedAnalysis.jobSkills.length > 0 && (
+                      <div className="pt-2.5 border-t border-[var(--hairline)] space-y-2">
+                        <div className="flex items-center justify-between text-[12px]">
+                          <span className="font-medium text-[hsl(var(--ink-secondary))]">
+                            Resume keyword match
+                          </span>
+                          {fresherProfile.skills.length === 0 && (
+                            <Link
+                              to="/settings"
+                              onClick={() => setSelectedApp(null)}
+                              className="text-[11px] font-medium text-[hsl(var(--accent-ink))] hover:underline"
+                            >
+                              Add your resume skills
+                            </Link>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedAnalysis.matchedSkills.map((sk) => (
+                            <span
+                              key={`m-${sk}`}
+                              className="px-2 py-0.5 rounded-[6px] bg-[hsl(var(--semantic-positive-bg))] border border-[rgba(21,128,61,0.2)] text-[hsl(var(--semantic-positive))] text-[11px] font-medium"
+                            >
+                              {sk}
+                            </span>
+                          ))}
+                          {selectedAnalysis.missingSkills.map((sk) => (
+                            <span
+                              key={`g-${sk}`}
+                              className="px-2 py-0.5 rounded-[6px] bg-[hsl(var(--semantic-warning-bg))] border border-[rgba(180,83,9,0.2)] text-[hsl(var(--semantic-warning))] text-[11px] font-medium"
+                            >
+                              Missing: {sk}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedAnalysis.portalKind === 'job_board' && (
+                      <p className="text-[11px] text-[hsl(var(--ink-muted))] pt-1">
+                        {selectedAnalysis.portalGuidance}
+                      </p>
+                    )}
                   </div>
                 )}
-                
-                {/* Description */}
+
+                {/* Full-Context AI Job Match & Resume Edit Suggestions */}
+                <div className="p-4 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[13px] font-medium text-[hsl(var(--ink-primary))]">
+                        AI full-context resume match
+                      </div>
+                      <p className="text-[12px] text-[hsl(var(--ink-muted))]">
+                        Compares this entire JD against your parsed resume projects and skills
+                      </p>
+                    </div>
+
+                    {fresherProfile.resumeContext ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={runningAiMatch}
+                        onClick={handleRunAiMatch}
+                        className="h-8 px-3 rounded-[8px] bg-[hsl(var(--ink-primary))] hover:bg-[hsl(0_0%_18%)] text-[hsl(var(--surface-card))] text-[12px]"
+                      >
+                        {runningAiMatch
+                          ? 'Analyzing...'
+                          : selectedApp.aiMatch
+                            ? 'Re-analyze fit & edits'
+                            : 'Analyze fit & resume edits'}
+                      </Button>
+                    ) : (
+                      <Link
+                        to="/settings"
+                        onClick={() => setSelectedApp(null)}
+                        className="inline-flex items-center h-8 px-3 rounded-[8px] border border-[var(--hairline-strong)] bg-[hsl(var(--surface-card))] hover:bg-[hsl(var(--surface-raised))] text-[12px] font-medium text-[hsl(var(--accent-ink))]"
+                      >
+                        Upload resume in Settings
+                      </Link>
+                    )}
+                  </div>
+
+                  {aiMatchError && (
+                    <div className="text-[12px] text-[hsl(var(--semantic-danger))] bg-[hsl(var(--semantic-danger-bg))] border border-[rgba(185,28,28,0.2)] rounded-[8px] px-3 py-2">
+                      {aiMatchError}{' '}
+                      <Link
+                        to="/settings"
+                        onClick={() => setSelectedApp(null)}
+                        className="underline font-medium"
+                      >
+                        Configure in Settings
+                      </Link>
+                    </div>
+                  )}
+
+                  {selectedApp.aiMatch && (
+                    <div className="space-y-3 pt-2 border-t border-[var(--hairline)]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-[6px] text-[11px] font-medium border ${
+                            selectedApp.aiMatch.overallVerdict.includes('Strong')
+                              ? 'bg-[hsl(var(--semantic-positive-bg))] border-[rgba(21,128,61,0.22)] text-[hsl(var(--semantic-positive))]'
+                              : selectedApp.aiMatch.overallVerdict.includes('Good')
+                                ? 'bg-[var(--accent-tint)] border-[rgba(27,74,214,0.22)] text-[hsl(var(--accent-ink))]'
+                                : 'bg-[hsl(var(--semantic-warning-bg))] border-[rgba(180,83,9,0.22)] text-[hsl(var(--semantic-warning))]'
+                          }`}
+                        >
+                          {selectedApp.aiMatch.overallVerdict}
+                        </span>
+                        {selectedApp.aiMatch.model && (
+                          <span className="text-[11px] font-mono-num text-[hsl(var(--ink-muted))]">
+                            {selectedApp.aiMatch.model}
+                          </span>
+                        )}
+                      </div>
+
+                      {selectedApp.aiMatch.fitSummary && (
+                        <p className="text-[13px] leading-relaxed text-[hsl(var(--ink-primary))]">
+                          {selectedApp.aiMatch.fitSummary}
+                        </p>
+                      )}
+
+                      {selectedApp.aiMatch.experienceCheck && (
+                        <p className="text-[12px] text-[hsl(var(--ink-secondary))]">
+                          <span className="font-medium text-[hsl(var(--ink-primary))]">Experience check:</span>{' '}
+                          {selectedApp.aiMatch.experienceCheck}
+                        </p>
+                      )}
+
+                      {selectedApp.aiMatch.matchedHighlights.length > 0 && (
+                        <div>
+                          <div className="text-[12px] font-medium text-[hsl(var(--ink-primary))] mb-1">
+                            Matched from your resume
+                          </div>
+                          <ul className="space-y-1 text-[12px] text-[hsl(var(--ink-secondary))]">
+                            {selectedApp.aiMatch.matchedHighlights.map((item, idx) => (
+                              <li key={`${idx}-${item.slice(0, 16)}`}>- {item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {selectedApp.aiMatch.missingKeywords.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedApp.aiMatch.missingKeywords.map((kw) => (
+                            <span
+                              key={kw}
+                              className="px-2 py-0.5 rounded-[6px] bg-[hsl(var(--semantic-warning-bg))] border border-[rgba(180,83,9,0.2)] text-[hsl(var(--semantic-warning))] text-[11px] font-medium"
+                            >
+                              Missing: {kw}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {selectedApp.aiMatch.resumeEdits.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-[12px] font-medium text-[hsl(var(--ink-primary))]">
+                            Suggested resume edits for this role
+                          </div>
+                          <div className="space-y-2">
+                            {selectedApp.aiMatch.resumeEdits.map((edit, idx) => (
+                              <div
+                                key={`${idx}-${edit.section}`}
+                                className="border-l-2 border-[hsl(var(--accent-ink))] pl-3 py-1 space-y-1 text-[12px]"
+                              >
+                                <div className="font-medium text-[hsl(var(--ink-primary))]">
+                                  {edit.section}
+                                </div>
+                                {edit.currentFocus && (
+                                  <div className="text-[hsl(var(--ink-muted))]">
+                                    Current: {edit.currentFocus}
+                                  </div>
+                                )}
+                                <div className="text-[hsl(var(--ink-primary))]">
+                                  Suggested: {edit.suggestedChange}
+                                </div>
+                                {edit.reason && (
+                                  <div className="text-[11px] text-[hsl(var(--ink-muted))]">
+                                    Why: {edit.reason}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedApp.aiMatch.prepFocusTopics.length > 0 && (
+                        <div>
+                          <div className="text-[12px] font-medium text-[hsl(var(--ink-primary))] mb-1">
+                            Interview prep focus
+                          </div>
+                          <ul className="space-y-0.5 text-[12px] text-[hsl(var(--ink-secondary))]">
+                            {selectedApp.aiMatch.prepFocusTopics.map((topic, idx) => (
+                              <li key={`${idx}-${topic.slice(0, 16)}`}>- {topic}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {selectedApp.aiMatch.tailoredOutreachHook && (
+                        <div className="pt-2 border-t border-[var(--hairline)] space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-medium text-[hsl(var(--ink-primary))]">
+                              AI referral pitch hook
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  selectedApp.aiMatch?.tailoredOutreachHook || ''
+                                );
+                                setCopiedHook(true);
+                                setTimeout(() => setCopiedHook(false), 1800);
+                              }}
+                              className="text-[11px] font-medium text-[hsl(var(--accent-ink))] hover:underline"
+                            >
+                              {copiedHook ? 'Copied hook' : 'Copy hook'}
+                            </button>
+                          </div>
+                          <p className="text-[12px] text-[hsl(var(--ink-secondary))]">
+                            {selectedApp.aiMatch.tailoredOutreachHook}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {selectedOutreach && (
+                  <div className="p-4 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)] space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[12px] font-medium text-[hsl(var(--ink-primary))] inline-flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5 text-[hsl(var(--accent-ink))]" strokeWidth={1.75} />
+                        Outreach &amp; follow-up templates
+                      </span>
+                      <div className="inline-flex items-center gap-1 bg-[hsl(var(--surface-raised))] p-0.5 rounded-[7px] border border-[var(--hairline)]">
+                        {(
+                          [
+                            ['referral', 'Referral DM'],
+                            ['followup', '7-day follow-up'],
+                            ['thankyou', 'Thank you'],
+                          ] as const
+                        ).map(([tabKey, tabLabel]) => (
+                          <button
+                            key={tabKey}
+                            type="button"
+                            onClick={() => {
+                              setOutreachTab(tabKey);
+                              setCopiedOutreach(false);
+                            }}
+                            className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium transition-ui ${
+                              outreachTab === tabKey
+                                ? 'bg-[hsl(var(--surface-card))] text-[hsl(var(--ink-primary))] shadow-[0_1px_2px_rgba(23,23,23,0.06)]'
+                                : 'text-[hsl(var(--ink-secondary))] hover:text-[hsl(var(--ink-primary))]'
+                            }`}
+                          >
+                            {tabLabel}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="text-[12px] leading-relaxed text-[hsl(var(--ink-primary))] border-l-2 border-[hsl(var(--accent-ink))] pl-3 py-0.5 whitespace-pre-line">
+                      {activeOutreachMessage}
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCopyOutreach}
+                        className="h-8 px-3 rounded-[8px] border-[var(--hairline-strong)] text-[12px]"
+                      >
+                        {copiedOutreach ? (
+                          <Check className="w-3.5 h-3.5 mr-1.5 text-[hsl(var(--semantic-positive))]" strokeWidth={1.75} />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5 mr-1.5 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                        )}
+                        {copiedOutreach ? 'Copied message' : 'Copy message'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {selectedRequirements.length > 0 && (
+                  <div className="p-4 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                    <div className="flex items-center justify-between gap-2 mb-2.5">
+                      <span className="text-[12px] font-medium text-[hsl(var(--ink-primary))] inline-flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[hsl(var(--accent-ink))]" strokeWidth={1.75} />
+                        Requirements &amp; qualifications
+                      </span>
+                      <span className="text-[11px] font-mono-num text-[hsl(var(--ink-muted))]">
+                        {selectedRequirements.length}
+                      </span>
+                    </div>
+                    <ul className="space-y-1.5">
+                      {selectedRequirements.map((req, idx) => (
+                        <li
+                          key={`${idx}-${req.slice(0, 24)}`}
+                          className="flex items-start gap-2 text-[13px] leading-snug text-[hsl(var(--ink-secondary))]"
+                        >
+                          <span
+                            className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent-ink))] mt-[7px] flex-shrink-0"
+                            aria-hidden="true"
+                          />
+                          <span>{req}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {selectedApp.description && (
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <label className="text-sm font-medium text-gray-700 mb-2 block">Job Description</label>
-                    <div className="text-gray-700 whitespace-pre-line max-h-48 overflow-y-auto">
+                  <div className="p-4 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                    <div className="text-[12px] font-medium text-[hsl(var(--ink-muted))] mb-2">
+                      Job description
+                    </div>
+                    <div className="text-[13px] leading-relaxed text-[hsl(var(--ink-secondary))] whitespace-pre-line">
                       {selectedApp.description}
                     </div>
                   </div>
                 )}
-                
-                {/* Notes */}
+
                 {selectedApp.notes && (
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <label className="text-sm font-medium text-gray-700 mb-2 block">Notes</label>
-                    <p className="text-gray-700 whitespace-pre-line">{selectedApp.notes}</p>
+                  <div className="p-4 rounded-[10px] bg-[hsl(var(--surface-page))] border border-[var(--hairline)]">
+                    <div className="text-[12px] font-medium text-[hsl(var(--ink-muted))] mb-1.5">
+                      Notes
+                    </div>
+                    <p className="text-[13px] leading-relaxed text-[hsl(var(--ink-secondary))] whitespace-pre-line">
+                      {selectedApp.notes}
+                    </p>
                   </div>
                 )}
-                
-                {/* Action Buttons */}
-                <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setShowViewDialog(false);
-                      editApplication(selectedApp);
-                    }}
-                    className="flex items-center space-x-2"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                    <span>Edit</span>
-                  </Button>
-                  {selectedApp.jobUrl && (
-                    <Button
-                      onClick={() => window.open(selectedApp.jobUrl, '_blank')}
-                      className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>View Job</span>
-                    </Button>
-                  )}
-                </div>
               </div>
-            )}
-          </DialogContent>
-        </Dialog>
-      </div>
+
+              <div className="px-5 sm:px-6 py-3.5 border-t border-[var(--hairline)] bg-[hsl(var(--surface-page))] flex flex-wrap justify-end gap-2 flex-shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const target = selectedApp;
+                    setSelectedApp(null);
+                    setScheduleApp(target);
+                  }}
+                  className="h-9 px-4 rounded-[8px]"
+                >
+                  Schedule interview
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const target = selectedApp;
+                    setSelectedApp(null);
+                    setEditingApp(target);
+                    setShowForm(true);
+                  }}
+                  className="h-9 px-4 rounded-[8px]"
+                >
+                  Edit application
+                </Button>
+                {selectedJobHref && (
+                  <a
+                    href={selectedJobHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-[8px] text-[13px] font-medium transition-ui ${
+                      selectedApplyHref && selectedApplyHref !== selectedJobHref
+                        ? 'border border-[var(--hairline-strong)] bg-[hsl(var(--surface-card))] text-[hsl(var(--ink-primary))] hover:bg-[hsl(var(--surface-raised))]'
+                        : 'bg-[hsl(var(--ink-primary))] text-[hsl(var(--surface-card))] hover:bg-[hsl(0_0%_18%)]'
+                    }`}
+                  >
+                    Open posting
+                    <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  </a>
+                )}
+                {selectedApplyHref && selectedApplyHref !== selectedJobHref && (
+                  <a
+                    href={selectedApplyHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 h-9 px-4 rounded-[8px] bg-[hsl(var(--ink-primary))] text-[hsl(var(--surface-card))] text-[13px] font-medium hover:bg-[hsl(0_0%_18%)] transition-ui"
+                  >
+                    Apply directly
+                    <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  </a>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <InterviewFormDialog
+        open={!!scheduleApp}
+        onOpenChange={(open) => !open && setScheduleApp(null)}
+        prefillApplication={scheduleApp}
+        applications={applications}
+        onSave={async (data) => createInterview(data)}
+      />
     </div>
   );
 };

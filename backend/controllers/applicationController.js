@@ -1,4 +1,4 @@
-const ApplicationModel = require('../models/Application');
+const { ApplicationModel } = require('../models/Application');
 const { notifyUser } = require('../services/websocketService');
 
 class ApplicationController {
@@ -16,7 +16,6 @@ class ApplicationController {
     try {
       const newApp = await ApplicationModel.create(req.userId, req.body);
 
-      // Real-time notification to user's connected dashboard tabs
       notifyUser(req.userId, {
         type: 'NEW_APPLICATION',
         application: newApp,
@@ -28,8 +27,10 @@ class ApplicationController {
         message: 'Application saved successfully',
       });
     } catch (error) {
-      console.error('Error creating application:', error);
       const status = error.statusCode || 500;
+      if (process.env.NODE_ENV !== 'test' || status >= 500) {
+        console.error('Error creating application:', error);
+      }
       res.status(status).json({
         success: false,
         error: error.message || 'Failed to save application',
@@ -53,8 +54,11 @@ class ApplicationController {
 
       res.json({ success: true, data: updated });
     } catch (error) {
-      console.error('Error updating application:', error);
-      res.status(500).json({ success: false, error: 'Internal server error' });
+      const status = error.statusCode || 500;
+      if (process.env.NODE_ENV !== 'test' || status >= 500) {
+        console.error('Error updating application:', error);
+      }
+      res.status(status).json({ success: false, error: error.message || 'Internal server error' });
     }
   }
 
@@ -83,14 +87,24 @@ class ApplicationController {
     try {
       const { frontendApplications = [] } = req.body;
       const result = await ApplicationModel.sync(req.userId, frontendApplications);
+
+      if (result.inserted.length > 0) {
+        notifyUser(req.userId, {
+          type: 'APPLICATIONS_SYNCED',
+          applications: result.applications,
+        });
+      }
+
       res.json({
         success: true,
+        applications: result.applications,
         newApplications: result.newApplications,
         syncedCount: result.syncedCount,
       });
     } catch (error) {
       console.error('Error syncing applications:', error);
-      res.status(500).json({ success: false, error: 'Failed to sync applications' });
+      const status = error.statusCode || 500;
+      res.status(status).json({ success: false, error: error.message || 'Failed to sync applications' });
     }
   }
 }

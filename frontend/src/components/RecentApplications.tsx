@@ -1,8 +1,12 @@
-
-import React, { useState, useEffect } from 'react';
-import { Building2, Calendar, MoreHorizontal, Eye, Edit3, Trash2, ExternalLink } from 'lucide-react';
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { MoreHorizontal, Edit3, Trash2, ExternalLink, Briefcase } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
+import { useTracker } from '@/context/TrackerContext';
+import { ApplicationForm } from './ApplicationForm';
+import { StagePips } from './StagePips';
+import { extractDomain, formatShortDate, safeExternalUrl } from '@/lib/formatters';
+import { JobApplication } from '@/types/tracker';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,221 +14,152 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-interface JobApplication {
-  id: string;
-  company: string;
-  position: string;
-  location?: string;
-  salary?: string;
-  jobUrl?: string;
-  description?: string;
-  status: 'Applied' | 'Interview Scheduled' | 'Under Review' | 'Rejected' | 'Offer';
-  appliedDate: string;
-  notes?: string;
-}
-
-const statusConfig = {
-  'Applied': { color: 'bg-blue-50 text-blue-700 border-blue-200' },
-  'Interview Scheduled': { color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  'Under Review': { color: 'bg-amber-50 text-amber-700 border-amber-200' },
-  'Rejected': { color: 'bg-red-50 text-red-700 border-red-200' },
-  'Offer': { color: 'bg-purple-50 text-purple-700 border-purple-200' }
-};
-
-const BACKEND_URL = 'https://job-hunter-backend-sigma.vercel.app';
-
 export const RecentApplications = () => {
-  const [applications, setApplications] = useState<JobApplication[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const { toast } = useToast();
+  const { applications, isLoading, updateApplication, deleteApplication } = useTracker();
+  const [editingApp, setEditingApp] = useState<JobApplication | null>(null);
 
-  useEffect(() => {
-    loadApplications();
-    
-    // Listen for global refresh events from extension
-    const handleRefresh = () => {
-      console.log('RecentApplications component: Received refresh event, reloading...');
-      loadApplications();
-    };
-    
-    window.addEventListener('jobApplicationAdded', handleRefresh);
-    
-    return () => {
-      window.removeEventListener('jobApplicationAdded', handleRefresh);
-    };
-  }, []);
-
-  const loadApplications = async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(`${BACKEND_URL}/api/applications`);
-      if (response.ok) {
-        const data = await response.json();
-        setApplications(data.applications?.slice(0, 4) || []);
-      } else {
-        throw new Error('Backend not available');
-      }
-    } catch (error) {
-      //console.log('Loading from localStorage fallback');
-      const savedApplications = localStorage.getItem('jobApplications');
-      if (savedApplications) {
-        try {
-          const parsed = JSON.parse(savedApplications);
-          setApplications((Array.isArray(parsed) ? parsed : []).slice(0, 4));
-        } catch (error) {
-          console.error('Error loading from localStorage:', error);
-          setApplications([]);
-        }
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const deleteApplication = async (id: string) => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/applications/${id}`, {
-        method: 'DELETE'
-      });
-      
-      if (response.ok) {
-        setApplications(prev => prev.filter(app => app.id !== id));
-        toast({
-          title: "Application Deleted",
-          description: "Application has been removed successfully",
-        });
-      } else {
-        throw new Error('Failed to delete from backend');
-      }
-    } catch (error) {
-      // Fallback to local deletion
-      setApplications(prev => prev.filter(app => app.id !== id));
-      const savedApplications = localStorage.getItem('jobApplications');
-      if (savedApplications) {
-        const parsed = JSON.parse(savedApplications);
-        const updated = parsed.filter((app: JobApplication) => app.id !== id);
-        localStorage.setItem('jobApplications', JSON.stringify(updated));
-      }
-      
-      toast({
-        title: "Application Deleted",
-        description: "Application removed locally",
-      });
-    }
-  };
-
-  const viewApplication = (app: JobApplication) => {
-    if (app.jobUrl) {
-      window.open(app.jobUrl, '_blank');
-    } else {
-      toast({
-        title: "No URL Available",
-        description: "This application doesn't have a job URL",
-        variant: "destructive"
-      });
-    }
-  };
+  const recentApps = applications.slice(0, 5);
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-slate-200 rounded w-1/3"></div>
-          <div className="space-y-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-16 bg-slate-100 rounded-lg"></div>
-            ))}
-          </div>
+      <section className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline p-6">
+        <div className="h-5 w-40 bg-[hsl(var(--surface-raised))] rounded mb-4" />
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-14 bg-[hsl(var(--surface-raised))] rounded-[8px]" />
+          ))}
         </div>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-      <div className="p-6 border-b border-slate-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-800">Recent Applications</h2>
-            <p className="text-slate-600 text-sm">Your latest job applications</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => window.location.href = '/applications'}>
-            View All
-          </Button>
+    <section className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline overflow-hidden">
+      <div className="px-6 py-4 border-b border-[var(--hairline)] flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-[16px] leading-6 font-medium text-[hsl(var(--ink-primary))]">
+            Recent applications
+          </h2>
+          <p className="text-[13px] leading-5 text-[hsl(var(--ink-muted))]">
+            Latest entries in your hiring ledger
+          </p>
         </div>
+
+        <Link
+          to="/applications"
+          className="inline-flex items-center h-8 px-3 rounded-[8px] border border-[var(--hairline-strong)] bg-[hsl(var(--surface-card))] hover:bg-[hsl(var(--surface-raised))] text-[13px] font-medium text-[hsl(var(--ink-primary))] transition-ui"
+        >
+          View all
+        </Link>
       </div>
-      
-      <div className="p-6">
-        {applications.length === 0 ? (
-          <div className="text-center py-8">
-            <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <h3 className="text-slate-500 font-medium">No Applications Yet</h3>
-            <p className="text-slate-400 text-sm">Start tracking your job applications</p>
+
+      {recentApps.length === 0 ? (
+        <div className="py-12 px-6 text-center">
+          <div className="w-10 h-10 rounded-[8px] bg-[hsl(var(--surface-raised))] border border-[var(--hairline)] flex items-center justify-center mx-auto mb-3">
+            <Briefcase className="w-4 h-4 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
           </div>
-        ) : (
-          <div className="space-y-4">
-            {applications.map((app) => (
-              <div key={app.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors group">
-                <div className="flex items-center space-x-4 flex-1">
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg shadow-lg flex items-center justify-center text-white font-bold text-lg">
+          <p className="text-[14px] font-medium text-[hsl(var(--ink-primary))] mb-1">
+            No applications logged yet
+          </p>
+          <p className="text-[13px] text-[hsl(var(--ink-muted))]">
+            Use the Add application button above or capture jobs from Chrome
+          </p>
+        </div>
+      ) : (
+        <div className="divide-y divide-[var(--hairline)]">
+          {recentApps.map((app) => {
+            const href = safeExternalUrl(app.jobUrl);
+            const domain = extractDomain(app.jobUrl);
+
+            return (
+              <div
+                key={app.id}
+                className="px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[hsl(var(--surface-page))] transition-ui"
+              >
+                <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                  <div className="w-9 h-9 rounded-[8px] bg-[hsl(var(--surface-raised))] border border-[var(--hairline)] flex items-center justify-center text-[13px] font-medium text-[hsl(var(--ink-primary))] flex-shrink-0">
                     {app.company.charAt(0).toUpperCase()}
                   </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-medium text-slate-900">{app.company}</h3>
-                      {app.jobUrl && (
-                        <button
-                          onClick={() => viewApplication(app)}
-                          className="text-blue-600 hover:text-blue-700 p-1"
-                          title="View job posting"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                        </button>
-                      )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[14px] font-medium text-[hsl(var(--ink-primary))] truncate">
+                        {app.company}
+                      </span>
+                      <span className="text-[12px] font-mono-num text-[hsl(var(--ink-muted))] hidden md:inline">
+                        {domain}
+                      </span>
                     </div>
-                    <p className="text-sm text-slate-600 mb-1">{app.position}</p>
-                    <div className="flex items-center space-x-2">
-                      <Calendar className="w-3 h-3 text-slate-400" />
-                      <span className="text-xs text-slate-500">Applied {app.appliedDate}</span>
-                    </div>
+                    <p className="text-[13px] text-[hsl(var(--ink-secondary))] truncate">
+                      {app.position}
+                    </p>
                   </div>
                 </div>
-                
-                <div className="flex items-center space-x-3">
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${statusConfig[app.status].color}`}>
-                    {app.status}
+
+                <div className="flex items-center justify-between sm:justify-end gap-4 flex-shrink-0">
+                  <StagePips status={app.status} compact />
+
+                  <span className="font-mono-num text-[12px] text-[hsl(var(--ink-muted))] w-24 text-right hidden sm:inline-block">
+                    {formatShortDate(app.appliedDate)}
                   </span>
-                  
+
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                        <MoreHorizontal className="w-4 h-4" />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--ink-primary))]"
+                        aria-label={`Actions for ${app.company}`}
+                      >
+                        <MoreHorizontal className="w-4 h-4" strokeWidth={1.5} />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => viewApplication(app)}>
-                        <Eye className="w-4 h-4 mr-2" />
-                        View Details
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        <Edit3 className="w-4 h-4 mr-2" />
+                    <DropdownMenuContent
+                      align="end"
+                      className="w-44 bg-[hsl(var(--surface-card))] border border-[var(--hairline-strong)] rounded-[10px] shadow-[var(--shadow-float)] p-1"
+                    >
+                      {href && (
+                        <DropdownMenuItem asChild className="cursor-pointer rounded-[6px] text-[13px]">
+                          <a href={href} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
+                            Open posting
+                          </a>
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem
+                        onClick={() => setEditingApp(app)}
+                        className="cursor-pointer rounded-[6px] text-[13px]"
+                      >
+                        <Edit3 className="w-4 h-4 mr-2 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
                         Edit
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => deleteApplication(app.id)}
-                        className="text-red-600"
+                        className="cursor-pointer rounded-[6px] text-[13px] text-[hsl(var(--semantic-danger))]"
                       >
-                        <Trash2 className="w-4 h-4 mr-2" />
+                        <Trash2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
                         Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+            );
+          })}
+        </div>
+      )}
+
+      {editingApp && (
+        <ApplicationForm
+          application={editingApp}
+          onClose={() => setEditingApp(null)}
+          onSubmit={async (updates) => {
+            await updateApplication(editingApp.id, updates);
+            setEditingApp(null);
+          }}
+        />
+      )}
+    </section>
   );
 };

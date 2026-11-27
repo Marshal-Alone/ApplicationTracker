@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/context/AuthContext';
-import { LogIn, UserPlus, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -26,6 +26,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const { login, register } = useAuth();
 
+  useEffect(() => {
+    setMode(defaultMode);
+    setError(null);
+  }, [defaultMode, isOpen]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -37,11 +42,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         if (res.success) {
           onClose();
         } else {
-          setError(res.error || 'Failed to sign in');
+          setError(res.error || 'Invalid email or password');
         }
       } else {
-        if (!name.trim()) {
-          setError('Name is required');
+        if (name.trim().length < 2) {
+          setError('Name must be at least 2 characters');
           setIsSubmitting(false);
           return;
         }
@@ -49,7 +54,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         if (res.success) {
           onClose();
         } else {
-          setError(res.error || 'Failed to create account');
+          setError(res.error || 'Could not create account');
         }
       }
     } finally {
@@ -59,30 +64,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md bg-white border border-slate-200 shadow-xl rounded-2xl p-6">
-        <DialogHeader className="text-left space-y-2">
-          <DialogTitle className="text-xl font-bold tracking-tight text-slate-900">
+      <DialogContent className="sm:max-w-md bg-[hsl(var(--surface-card))] border border-[var(--hairline-strong)] shadow-[var(--shadow-float)] rounded-[14px] p-6">
+        <DialogHeader className="text-left space-y-1.5">
+          <DialogTitle className="text-[18px] font-medium tracking-[-0.01em] text-[hsl(var(--ink-primary))]">
             {mode === 'signin' ? 'Sign in to ApplicationTracker' : 'Create your account'}
           </DialogTitle>
-          <DialogDescription className="text-sm text-slate-600">
+          <DialogDescription className="text-[13px] text-[hsl(var(--ink-secondary))]">
             {mode === 'signin'
-              ? 'Access your private job tracking workspace and synced applications.'
-              : 'Start tracking job applications across LinkedIn, Internshala, and more.'}
+              ? 'Access your synced applications, interviews, and Chrome extension key.'
+              : 'Sync applications across your browser and desktop workspace.'}
           </DialogDescription>
         </DialogHeader>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <div className="flex items-center gap-2 p-3 text-[13px] text-[hsl(var(--semantic-danger))] bg-[hsl(var(--semantic-danger-bg))] border border-[rgba(185,28,28,0.2)] rounded-[8px]">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+        <form onSubmit={handleSubmit} className="space-y-4 mt-1">
           {mode === 'signup' && (
-            <div className="space-y-1">
-              <Label htmlFor="auth-name" className="text-xs font-semibold uppercase text-slate-700">
-                Full Name
+            <div className="space-y-1.5">
+              <Label htmlFor="auth-name" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+                Full name
               </Label>
               <Input
                 id="auth-name"
@@ -91,14 +96,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Jane Doe"
                 required
-                className="h-10 rounded-lg border-slate-300"
+                className="h-9 rounded-[8px]"
               />
             </div>
           )}
 
-          <div className="space-y-1">
-            <Label htmlFor="auth-email" className="text-xs font-semibold uppercase text-slate-700">
-              Email Address
+          <div className="space-y-1.5">
+            <Label htmlFor="auth-email" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
+              Email address
             </Label>
             <Input
               id="auth-email"
@@ -107,12 +112,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
               required
-              className="h-10 rounded-lg border-slate-300"
+              className="h-9 rounded-[8px]"
             />
           </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="auth-password" className="text-xs font-semibold uppercase text-slate-700">
+          <div className="space-y-1.5">
+            <Label htmlFor="auth-password" className="text-[13px] font-medium text-[hsl(var(--ink-secondary))]">
               Password
             </Label>
             <Input
@@ -120,45 +125,39 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="Minimum 6 characters"
               required
               minLength={6}
-              className="h-10 rounded-lg border-slate-300"
+              className="h-9 rounded-[8px]"
             />
           </div>
 
           <Button
             type="submit"
             disabled={isSubmitting}
-            className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg shadow-sm"
+            className="w-full h-9 bg-[hsl(var(--ink-primary))] hover:bg-[hsl(0_0%_18%)] text-[hsl(var(--surface-card))] font-medium text-[13px] rounded-[8px]"
           >
-            {isSubmitting ? (
-              'Processing...'
-            ) : mode === 'signin' ? (
-              <span className="flex items-center justify-center gap-2">
-                <LogIn className="w-4 h-4" /> Sign In
-              </span>
-            ) : (
-              <span className="flex items-center justify-center gap-2">
-                <UserPlus className="w-4 h-4" /> Create Account
-              </span>
-            )}
+            {isSubmitting
+              ? 'Working...'
+              : mode === 'signin'
+              ? 'Sign in'
+              : 'Create account'}
           </Button>
         </form>
 
-        <div className="text-center pt-2 border-t border-slate-100 text-sm text-slate-600">
+        <div className="text-center pt-3 border-t border-[var(--hairline)] text-[13px] text-[hsl(var(--ink-secondary))]">
           {mode === 'signin' ? (
             <p>
-              Don't have an account?{' '}
+              No account yet?{' '}
               <button
                 type="button"
                 onClick={() => {
                   setMode('signup');
                   setError(null);
                 }}
-                className="font-semibold text-blue-600 hover:underline"
+                className="font-medium text-[hsl(var(--accent-ink))] hover:underline"
               >
-                Sign up
+                Create one
               </button>
             </p>
           ) : (
@@ -170,7 +169,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   setMode('signin');
                   setError(null);
                 }}
-                className="font-semibold text-blue-600 hover:underline"
+                className="font-medium text-[hsl(var(--accent-ink))] hover:underline"
               >
                 Sign in
               </button>

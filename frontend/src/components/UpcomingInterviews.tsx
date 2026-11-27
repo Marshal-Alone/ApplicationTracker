@@ -1,619 +1,240 @@
-
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Video, MapPin, Phone, Plus, Edit3, Trash2, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Calendar, Video, MapPin, Phone, Plus, Edit3, Trash2, Check, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { useToast } from '@/hooks/use-toast';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-
-interface JobApplication {
-  id: string;
-  company: string;
-  position: string;
-  status: 'Applied' | 'Interview Scheduled' | 'Under Review' | 'Rejected' | 'Offer';
-  appliedDate: string;
-}
-
-interface Interview {
-  id: string;
-  applicationId: string;
-  company: string;
-  position: string;
-  date: string;
-  time: string;
-  type: 'Video Call' | 'On-site' | 'Phone Call';
-  location?: string;
-  meetingLink?: string;
-  notes?: string;
-  interviewer?: string;
-  status: 'Scheduled' | 'Completed' | 'Cancelled';
-}
+import { useTracker } from '@/context/TrackerContext';
+import { InterviewFormDialog } from './InterviewFormDialog';
+import { Interview, InterviewType } from '@/types/tracker';
+import { formatInterviewDateTime, safeExternalUrl } from '@/lib/formatters';
 
 interface UpcomingInterviewsProps {
-  applications: JobApplication[];
+  applications?: { id: string; company: string; position: string; status: string }[];
 }
 
-export const UpcomingInterviews: React.FC<UpcomingInterviewsProps> = ({ applications }) => {
-  const [interviews, setInterviews] = useState<Interview[]>([]);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [showEditForm, setShowEditForm] = useState(false);
-  const [selectedInterview, setSelectedInterview] = useState<Interview | null>(null);
-  const [formData, setFormData] = useState({
-    applicationId: '',
-    company: '',
-    position: '',
-    date: '',
-    time: '',
-    type: 'Video Call' as Interview['type'],
-    location: '',
-    meetingLink: '',
-    notes: '',
-    interviewer: ''
-  });
-  const { toast } = useToast();
+export const UpcomingInterviews: React.FC<UpcomingInterviewsProps> = () => {
+  const {
+    applications,
+    interviews,
+    createInterview,
+    updateInterview,
+    deleteInterview,
+  } = useTracker();
 
-  useEffect(() => {
-    // Load interviews from localStorage
-    const savedInterviews = localStorage.getItem('interviews');
-    if (savedInterviews) {
-      try {
-        const parsed = JSON.parse(savedInterviews);
-        setInterviews(Array.isArray(parsed) ? parsed : []);
-      } catch (error) {
-        console.error('Error loading interviews:', error);
-        setInterviews([]);
-      }
-    }
-  }, []);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingInterview, setEditingInterview] = useState<Interview | null>(null);
 
-  useEffect(() => {
-    // Save interviews to localStorage whenever they change
-    localStorage.setItem('interviews', JSON.stringify(interviews));
-  }, [interviews]);
-
-  const scheduledApplications = applications.filter(app => app.status === 'Interview Scheduled');
-  const upcomingInterviews = interviews.filter(interview => 
-    interview.status === 'Scheduled' && 
-    new Date(interview.date + 'T' + interview.time) > new Date()
+  const scheduledApplications = applications.filter(
+    (app) => app.status === 'Interview Scheduled'
   );
 
-  const getIconForType = (type: Interview['type']) => {
+  const upcomingInterviews = interviews
+    .filter(
+      (iv) =>
+        iv.status === 'Scheduled' &&
+        new Date(`${iv.date}T${iv.time || '23:59'}`).getTime() >= Date.now() - 3600000
+    )
+    .sort(
+      (a, b) =>
+        new Date(`${a.date}T${a.time || '09:00'}`).getTime() -
+        new Date(`${b.date}T${b.time || '09:00'}`).getTime()
+    )
+    .slice(0, 4);
+
+  const prefillApp = scheduledApplications[0] || applications[0] || null;
+
+  const getTypeIcon = (type: InterviewType) => {
     switch (type) {
-      case 'Video Call': return Video;
-      case 'On-site': return MapPin;
-      case 'Phone Call': return Phone;
-      default: return Clock;
+      case 'Video Call':
+        return Video;
+      case 'On-site':
+        return MapPin;
+      case 'Phone Call':
+        return Phone;
     }
-  };
-
-  const getColorForType = (type: Interview['type']) => {
-    switch (type) {
-      case 'Video Call': return 'text-blue-600 bg-blue-50';
-      case 'On-site': return 'text-green-600 bg-green-50';
-      case 'Phone Call': return 'text-purple-600 bg-purple-50';
-      default: return 'text-slate-600 bg-slate-50';
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formData.company || !formData.position || !formData.date || !formData.time) {
-      toast({
-        title: "Missing Fields",
-        description: "Please fill in all required fields",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const interviewData: Interview = {
-      id: selectedInterview?.id || Date.now().toString(),
-      applicationId: formData.applicationId,
-      company: formData.company,
-      position: formData.position,
-      date: formData.date,
-      time: formData.time,
-      type: formData.type,
-      location: formData.location,
-      meetingLink: formData.meetingLink,
-      notes: formData.notes,
-      interviewer: formData.interviewer,
-      status: 'Scheduled'
-    };
-
-    if (selectedInterview) {
-      // Update existing interview
-      setInterviews(prev => 
-        prev.map(interview => 
-          interview.id === selectedInterview.id ? interviewData : interview
-        )
-      );
-      toast({
-        title: "Interview Updated! 📅",
-        description: `${interviewData.position} at ${interviewData.company}`,
-      });
-      setShowEditForm(false);
-    } else {
-      // Add new interview
-      setInterviews(prev => [...prev, interviewData]);
-      toast({
-        title: "Interview Scheduled! 📅",
-        description: `${interviewData.position} at ${interviewData.company}`,
-      });
-      setShowAddForm(false);
-    }
-
-    resetForm();
-  };
-
-  const resetForm = () => {
-    setFormData({
-      applicationId: '',
-      company: '',
-      position: '',
-      date: '',
-      time: '',
-      type: 'Video Call',
-      location: '',
-      meetingLink: '',
-      notes: '',
-      interviewer: ''
-    });
-    setSelectedInterview(null);
-  };
-
-  const deleteInterview = (id: string) => {
-    setInterviews(prev => prev.filter(interview => interview.id !== id));
-    toast({
-      title: "Interview Cancelled",
-      description: "Interview has been removed from your schedule",
-    });
-  };
-
-  const editInterview = (interview: Interview) => {
-    setSelectedInterview(interview);
-    setFormData({
-      applicationId: interview.applicationId,
-      company: interview.company,
-      position: interview.position,
-      date: interview.date,
-      time: interview.time,
-      type: interview.type,
-      location: interview.location || '',
-      meetingLink: interview.meetingLink || '',
-      notes: interview.notes || '',
-      interviewer: interview.interviewer || ''
-    });
-    setShowEditForm(true);
-  };
-
-  const joinInterview = (interview: Interview) => {
-    if (interview.meetingLink) {
-      window.open(interview.meetingLink, '_blank');
-    } else {
-      toast({
-        title: "No Meeting Link",
-        description: "This interview doesn't have a meeting link",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const markAsCompleted = (id: string) => {
-    setInterviews(prev => 
-      prev.map(interview => 
-        interview.id === id ? { ...interview, status: 'Completed' } : interview
-      )
-    );
-    toast({
-      title: "Interview Completed",
-      description: "Interview marked as completed",
-    });
-  };
-
-  const formatDateTime = (date: string, time: string) => {
-    const dateObj = new Date(date + 'T' + time);
-    return {
-      date: dateObj.toLocaleDateString('en-US', { 
-        weekday: 'short', 
-        month: 'short', 
-        day: 'numeric' 
-      }),
-      time: dateObj.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit',
-        hour12: true 
-      })
-    };
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-      <div className="flex items-center justify-between mb-6">
+    <section className="bg-[hsl(var(--surface-card))] rounded-[12px] surface-hairline p-6 flex flex-col h-full">
+      <div className="flex items-start justify-between gap-3 mb-5">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800 mb-1">Upcoming Interviews</h2>
-          <p className="text-slate-600 text-sm">
-            {upcomingInterviews.length > 0 
-              ? `${upcomingInterviews.length} interviews scheduled`
-              : `${scheduledApplications.length} applications ready for scheduling`
-            }
+          <h2 className="text-[16px] leading-6 font-medium text-[hsl(var(--ink-primary))]">
+            Upcoming interviews
+          </h2>
+          <p className="text-[13px] leading-5 text-[hsl(var(--ink-muted))] font-mono-num">
+            {upcomingInterviews.length > 0
+              ? `${upcomingInterviews.length} scheduled`
+              : `${scheduledApplications.length} awaiting time slot`}
           </p>
         </div>
-        <div className="flex items-center space-x-2">
-          <Button 
-            variant="outline" 
+
+        {upcomingInterviews.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
             size="sm"
-            onClick={() => setShowAddForm(true)}
-            className="border-blue-300 text-blue-600 hover:bg-blue-50"
+            onClick={() => {
+              setEditingInterview(null);
+              setModalOpen(true);
+            }}
+            className="h-8 px-2.5 text-[12px] rounded-[8px] border-[var(--hairline-strong)]"
           >
-            <Plus className="w-4 h-4 mr-2" />
+            <Plus className="w-3.5 h-3.5 mr-1" strokeWidth={1.5} />
             Schedule
           </Button>
-        </div>
+        )}
       </div>
-      
-      <div className="space-y-4">
+
+      <div className="flex-1 flex flex-col justify-center">
         {upcomingInterviews.length > 0 ? (
-          upcomingInterviews.map((interview) => {
-            const IconComponent = getIconForType(interview.type);
-            const colorClass = getColorForType(interview.type);
-            const { date, time } = formatDateTime(interview.date, interview.time);
-            const isToday = new Date(interview.date).toDateString() === new Date().toDateString();
-            
-            return (
-              <div key={interview.id} className={`flex items-center justify-between p-4 border rounded-xl hover:bg-slate-50 transition-colors group ${isToday ? 'border-blue-300 bg-blue-50' : 'border-slate-200'}`}>
-                <div className="flex items-center space-x-4 flex-1">
-                  <div className={`w-12 h-12 ${colorClass.split(' ')[1]} rounded-xl flex items-center justify-center`}>
-                    <IconComponent className={`w-5 h-5 ${colorClass.split(' ')[0]}`} />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold text-slate-900">{interview.company}</h3>
-                      {isToday && (
-                        <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">
-                          Today
-                        </span>
-                      )}
+          <div className="space-y-2.5">
+            {upcomingInterviews.map((iv) => {
+              const Icon = getTypeIcon(iv.type);
+              const { dateLabel, timeLabel } = formatInterviewDateTime(iv.date, iv.time);
+              const validMeetingLink = safeExternalUrl(iv.meetingLink);
+              const isToday =
+                new Date(`${iv.date}T00:00:00`).toDateString() === new Date().toDateString();
+
+              return (
+                <div
+                  key={iv.id}
+                  className={`p-3.5 rounded-[10px] border transition-ui ${
+                    isToday
+                      ? 'bg-[var(--accent-tint)] border-[rgba(27,74,214,0.22)]'
+                      : 'bg-[hsl(var(--surface-page))] border-[var(--hairline)]'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <span className="w-7 h-7 rounded-[6px] bg-[hsl(var(--surface-card))] border border-[var(--hairline)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Icon className="w-4 h-4 text-[hsl(var(--ink-secondary))]" strokeWidth={1.5} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[14px] font-medium text-[hsl(var(--ink-primary))] truncate">
+                            {iv.company}
+                          </span>
+                          {isToday && (
+                            <span className="text-[11px] font-mono-num font-medium text-[hsl(var(--accent-ink))] flex-shrink-0">
+                              Today
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[13px] text-[hsl(var(--ink-secondary))] truncate">
+                          {iv.position}
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-sm text-slate-600 mb-1">{interview.position}</p>
-                    <div className="flex items-center space-x-4 text-xs text-slate-500">
-                      <span className="font-medium">{date}</span>
-                      <span>{time}</span>
-                      <span className={`font-medium ${colorClass.split(' ')[0]}`}>{interview.type}</span>
-                      {interview.interviewer && (
-                        <span>with {interview.interviewer}</span>
-                      )}
+
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--hairline)]">
+                      <div className="flex flex-wrap items-center gap-2.5 text-[12px] font-mono-num text-[hsl(var(--ink-muted))]">
+                        <span>{dateLabel}</span>
+                        <span>{timeLabel}</span>
+                      </div>
+
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {validMeetingLink && (
+                          <a
+                            href={validMeetingLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-[6px] text-[hsl(var(--accent-ink))] hover:bg-[hsl(var(--surface-card))] transition-ui"
+                            title="Open meeting link"
+                            aria-label="Open meeting link"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.5} />
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => updateInterview(iv.id, { status: 'Completed' })}
+                          className="p-1.5 rounded-[6px] text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--semantic-positive))] hover:bg-[hsl(var(--surface-card))] transition-ui"
+                          title="Mark completed"
+                          aria-label="Mark completed"
+                        >
+                          <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingInterview(iv);
+                            setModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-[6px] text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--ink-primary))] hover:bg-[hsl(var(--surface-card))] transition-ui"
+                          title="Edit interview"
+                          aria-label="Edit interview"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteInterview(iv.id)}
+                          className="p-1.5 rounded-[6px] text-[hsl(var(--ink-muted))] hover:text-[hsl(var(--semantic-danger))] hover:bg-[hsl(var(--surface-card))] transition-ui"
+                          title="Remove interview"
+                          aria-label="Remove interview"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => joinInterview(interview)}
-                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                  >
-                    {interview.type === 'Video Call' ? 'Join' : 
-                     interview.type === 'Phone Call' ? 'Call' : 'Navigate'}
-                  </Button>
-                  <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => editInterview(interview)}
-                      className="text-slate-400 hover:text-slate-600 p-2"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => markAsCompleted(interview.id)}
-                      className="text-green-600 hover:text-green-700 p-2"
-                      title="Mark as completed"
-                    >
-                      ✓
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => deleteInterview(interview.id)}
-                      className="text-slate-400 hover:text-red-600 p-2"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        ) : scheduledApplications.length > 0 ? (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Calendar className="w-8 h-8 text-blue-600" />
+              );
+            })}
+
+            <div className="pt-2">
+              <Link
+                to="/interviews"
+                className="text-[12px] font-medium text-[hsl(var(--accent-ink))] hover:underline"
+              >
+                Open full interview schedule
+              </Link>
             </div>
-            <h3 className="text-lg font-semibold text-slate-800 mb-2">Ready to Schedule</h3>
-            <p className="text-slate-600 mb-4">
-              You have {scheduledApplications.length} applications with interviews to schedule
-            </p>
-            <Button 
-              onClick={() => setShowAddForm(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Schedule Interview
-            </Button>
           </div>
         ) : (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Calendar className="w-8 h-8 text-slate-400" />
+          <div className="py-8 text-center">
+            <div className="w-10 h-10 rounded-[8px] bg-[hsl(var(--surface-raised))] border border-[var(--hairline)] flex items-center justify-center mx-auto mb-3">
+              <Calendar className="w-4 h-4 text-[hsl(var(--ink-muted))]" strokeWidth={1.5} />
             </div>
-            <h3 className="text-lg font-semibold text-slate-800 mb-2">No Interviews Scheduled</h3>
-            <p className="text-slate-600 mb-4">
-              Interviews will appear here once you schedule them
+            <p className="text-[14px] font-medium text-[hsl(var(--ink-primary))] mb-1">
+              {scheduledApplications.length > 0 ? 'Ready to schedule' : 'No interviews scheduled'}
             </p>
-            <Button 
-              onClick={() => setShowAddForm(true)}
+            <p className="text-[13px] text-[hsl(var(--ink-muted))] mb-4 max-w-[240px] mx-auto">
+              {scheduledApplications.length > 0
+                ? `${scheduledApplications.length} application${
+                    scheduledApplications.length === 1 ? '' : 's'
+                  } reached interview stage`
+                : 'Log upcoming phone screens, technical rounds, and panels'}
+            </p>
+            <Button
+              type="button"
               variant="outline"
+              size="sm"
+              onClick={() => {
+                setEditingInterview(null);
+                setModalOpen(true);
+              }}
+              className="h-9 px-3.5 rounded-[8px] border-[var(--hairline-strong)] font-medium text-[13px]"
             >
-              <Plus className="w-4 h-4 mr-2" />
-              Schedule Interview
+              <Plus className="w-4 h-4 mr-1.5 text-[hsl(var(--ink-secondary))]" strokeWidth={1.5} />
+              Schedule interview
             </Button>
           </div>
         )}
       </div>
 
-      {/* Add Interview Form */}
-      <Dialog open={showAddForm} onOpenChange={(open) => { setShowAddForm(open); if (!open) resetForm(); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Schedule Interview</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Company *</label>
-                <Input
-                  value={formData.company}
-                  onChange={(e) => setFormData(prev => ({ ...prev, company: e.target.value }))}
-                  placeholder="Company name"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Position *</label>
-                <Input
-                  value={formData.position}
-                  onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
-                  placeholder="Job position"
-                  required
-                />
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Date *</label>
-                <Input
-                  type="date"
-                  value={formData.date}
-                  onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
-                  min={new Date().toISOString().split('T')[0]}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Time *</label>
-                <Input
-                  type="time"
-                  value={formData.time}
-                  onChange={(e) => setFormData(prev => ({ ...prev, time: e.target.value }))}
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Interview Type</label>
-              <select
-                value={formData.type}
-                onChange={(e) => setFormData(prev => ({ ...prev, type: e.target.value as Interview['type'] }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="Video Call">Video Call</option>
-                <option value="Phone Call">Phone Call</option>
-                <option value="On-site">On-site</option>
-              </select>
-            </div>
-
-            {formData.type === 'Video Call' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Meeting Link</label>
-                <Input
-                  type="url"
-                  value={formData.meetingLink}
-                  onChange={(e) => setFormData(prev => ({ ...prev, meetingLink: e.target.value }))}
-                  placeholder="https://meet.google.com/..."
-                />
-              </div>
-            )}
-
-            {formData.type === 'On-site' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Location</label>
-                <Input
-                  value={formData.location}
-                  onChange={(e) => setFormData(prev => ({ ...prev, location: e.target.value }))}
-                  placeholder="Office address"
-                />
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Interviewer</label>
-              <Input
-                value={formData.interviewer}
-                onChange={(e) => setFormData(prev => ({ ...prev, interviewer: e.target.value }))}
-                placeholder="Interviewer name"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
-              <textarea
-                value={formData.notes}
-                onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                placeholder="Additional notes..."
-                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none h-20"
-              />
-            </div>
-
-            <div className="flex space-x-3 pt-4">
-              <Button 
-                type="button" 
-                variant="outline" 
-                onClick={() => { setShowAddForm(false); resetForm(); }}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
-                Schedule
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Interview Form */}
-      <Dialog open={showEditForm} onOpenChange={(open) => { setShowEditForm(open); if (!open) resetForm(); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Interview</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Same form structure as add form */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Company *</label>
-                <Input
-                  value={formData.company}
-                  onChange={(e) => setFormData(prev => ({ ...prev, company: e.target.value }))}
-                  placeholder="Company name"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Position *</label>
-                <Input
-                  value={formData.position}
-                  onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
-                  placeholder="Job position"
-                  required
-                />
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Date *</label>
-                <Input
-                  type="date"
-                  value={formData.date}
-                  onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Time *</label>
-                <Input
-                  type="time"
-                  value={formData.time}
-                  onChange={(e) => setFormData(prev => ({ ...prev, time: e.target.value }))}
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Interview Type</label>
-              <select
-                value={formData.type}
-                onChange={(e) => setFormData(prev => ({ ...prev, type: e.target.value as Interview['type'] }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="Video Call">Video Call</option>
-                <option value="Phone Call">Phone Call</option>
-                <option value="On-site">On-site</option>
-              </select>
-            </div>
-
-            {formData.type === 'Video Call' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Meeting Link</label>
-                <Input
-                  type="url"
-                  value={formData.meetingLink}
-                  onChange={(e) => setFormData(prev => ({ ...prev, meetingLink: e.target.value }))}
-                  placeholder="https://meet.google.com/..."
-                />
-              </div>
-            )}
-
-            {formData.type === 'On-site' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Location</label>
-                <Input
-                  value={formData.location}
-                  onChange={(e) => setFormData(prev => ({ ...prev, location: e.target.value }))}
-                  placeholder="Office address"
-                />
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Interviewer</label>
-              <Input
-                value={formData.interviewer}
-                onChange={(e) => setFormData(prev => ({ ...prev, interviewer: e.target.value }))}
-                placeholder="Interviewer name"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
-              <textarea
-                value={formData.notes}
-                onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                placeholder="Additional notes..."
-                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none h-20"
-              />
-            </div>
-
-            <div className="flex space-x-3 pt-4">
-              <Button 
-                type="button" 
-                variant="outline" 
-                onClick={() => { setShowEditForm(false); resetForm(); }}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
-                Update
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <InterviewFormDialog
+        open={modalOpen}
+        onOpenChange={(open) => {
+          setModalOpen(open);
+          if (!open) setEditingInterview(null);
+        }}
+        editing={editingInterview}
+        prefillApplication={!editingInterview ? prefillApp : null}
+        applications={applications}
+        onSave={async (data, editingId) =>
+          editingId ? updateInterview(editingId, data) : createInterview(data)
+        }
+      />
+    </section>
   );
 };
